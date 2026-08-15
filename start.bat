@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title PAN - LAN File Server
+title PAN File Server
 cd /d "%~dp0"
 
 :loop

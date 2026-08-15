@@ -3,7 +3,7 @@
 网盘管理器 - Windows 桌面管理端 (tkinter, 纯标准库, 零依赖)
 
 功能:
-  * 一键启动/停止服务, 实时显示运行状态与局域网访问地址
+  * 一键启动/停止服务, 实时显示运行状态与访问地址
   * 文件管理: 上传 / 删除 / 重命名 / 复制下载链接 / 打开上传目录
   * 账号管理: 添加账号 / 删除账号 / 重置密码 / 设置管理员 (仅管理员)
   * 服务器设置: 标题 / 监听 IP / 端口 / 上传大小上限 / 上传目录 (直接生效, 自动重启)
@@ -77,7 +77,7 @@ DEFAULT_TEXTS = {
     "link_copied": "下载链接已复制", "copy_failed": "复制失败, 链接",
     "settings_saved": "设置已保存", "server_restarting": "设置已保存, 服务器重启中...",
     "port_invalid": "端口必须在 1-65535 之间", "request_failed": "请求失败",
-    "addr_lan": "局域网访问: {url}", "addr_local": "本机访问: {url}",
+    "addr_lan": "访问地址: {url}", "addr_local": "本机访问: {url}",
     "addr_unreachable": "⚠ 无法连接服务器 — 请确认电脑上的网盘程序(桌面管理端或 start.bat)正在运行",
     "rename_done": "重命名成功", "rename_failed": "重命名失败",
     "preview_close": "关闭", "prev_file": "上一个", "next_file": "下一个",
@@ -283,7 +283,7 @@ class PanGUI:
         ttk.Button(row, text="📁 打开上传目录", command=self.open_upload_dir).pack(side="left", padx=(8, 0))
         ttk.Button(row, text="🔗 复制地址", command=self.copy_addr).pack(side="left", padx=(8, 0))
 
-        ttk.Label(f, text="访问地址 (发给局域网内其他人即可免登录下载):").pack(anchor="w")
+        ttk.Label(f, text="访问地址 (发给其他人即可免登录下载):").pack(anchor="w")
         self.addr_list = tk.Listbox(f, height=4, activestyle="none")
         self.addr_list.pack(fill="x", pady=(4, 10))
 
@@ -394,7 +394,7 @@ class PanGUI:
         top.pack(fill="x", pady=(0, 8))
         ttk.Label(top, text="修改网页前端所有展示文本 (对所有人可见)。输入框留空 = 使用左侧默认文案, 保存后刷新网页生效。\n"
                             "填入 null = 该字段不在前端显示 (如不需要某个按钮或某行提示, 填 null 即可隐藏)。\n"
-                            "第一组「页头与地址栏」可修改顶部 📦 图标 (brand_logo) 与「局域网访问: http://...」地址行 (addr_lan)。",
+                            "第一组「页头与地址栏」可修改顶部 📦 图标 (brand_logo) 与「访问地址: http://...」地址行 (addr_lan)。",
                   foreground="#666666", justify="left").pack(side="left")
         ttk.Button(top, text="全部恢复默认", command=self.texts_reset).pack(side="right")
         ttk.Button(top, text="保存文案", command=self.texts_save).pack(side="right", padx=(8, 0))
@@ -478,7 +478,7 @@ class PanGUI:
             self.addr_list.delete(0, "end")
             if ips:
                 for ip in ips:
-                    self.addr_list.insert("end", "  http://%s:%d/   (局域网访问)" % (ip, cfg["port"]))
+                    self.addr_list.insert("end", "  http://%s:%d/   (访问地址)" % (ip, cfg["port"]))
             else:
                 self.addr_list.insert("end", "  http://127.0.0.1:%d/   (本机访问)" % cfg["port"])
         else:
@@ -968,7 +968,7 @@ class PanGUI:
     # ------------------------------------------------------------------ 设置
     def load_settings_into_form(self):
         cfg = panserver.CONFIG
-        self.var_title.set(cfg.get("title", "局域网网盘"))
+        self.var_title.set(cfg.get("title", "网盘管理器"))
         self.var_ip.set(cfg.get("ip", ""))
         self.var_port.set(str(cfg.get("port", 8000)))
         self.var_max.set(str(cfg.get("max_upload_mb", 2048)))

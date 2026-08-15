@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-局域网网盘服务端 —— 纯 Python 标准库实现, 无需安装任何第三方依赖
+网盘服务端 —— 纯 Python 标准库实现, 无需安装任何第三方依赖
+
+支持两种部署场景:
+  * 局域网共享: 同一网络内的手机/电脑通过浏览器访问
+  * 公网服务器部署: 部署在云服务器/公网主机上, 任何人可通过公网地址访问
+    (推荐前置 Nginx/Caddy 做 HTTPS 反向代理, 并设置强密码)
 
 功能:
-  * 自动识别本机局域网 IP, 启动后自动打开浏览器
+  * 自动识别本机 IP, 启动后自动打开浏览器
   * 多账号体系: 管理员可添加/删除账号、重置密码、授予管理权限
   * 可设置: 监听 IP / 端口 / 标题 / 上传大小上限 (管理员)
   * 浏览、下载: 无需登录 (下载支持断点续传)
@@ -49,7 +54,7 @@ CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 DEFAULTS = {
     "ip": "",                # 监听 IP, 空 = 0.0.0.0 (自动)
     "port": 8000,            # 监听端口
-    "title": "局域网网盘",    # 页面标题
+    "title": "网盘管理器",    # 页面标题
     "max_upload_mb": 2048,   # 单文件上传上限 (MB), 0 = 不限
     "upload_dir": "uploads", # 文件保存目录 (相对程序目录)
     "users": [],             # 账号列表: [{"username","salt","password_hash","is_admin"}]
@@ -232,7 +237,7 @@ def upload_dir():
 # 网络与安全工具
 # ----------------------------------------------------------------------------
 def get_local_ips():
-    """自动获取本机所有 IPv4 局域网地址"""
+    """自动获取本机所有 IPv4 地址 (局域网与公网部署均适用)"""
     ips = set()
     # 方法1: UDP 探测默认路由对应的网卡 IP (最可靠, 不会真正发包)
     try:
@@ -421,6 +426,14 @@ def count_admin():
 def kill_sessions_of(username):
     for t in [t for t, sess in SESSIONS.items() if sess and sess[0] == username]:
         SESSIONS.pop(t, None)
+
+
+def client_ip(handler):
+    """客户端真实 IP: 支持反向代理透传的 X-Forwarded-For (用于登录限流)"""
+    xff = handler.headers.get("X-Forwarded-For") or ""
+    if xff:
+        return xff.split(",")[0].strip() or handler.client_address[0]
+    return handler.client_address[0]
 
 
 def login_allowed(ip):
@@ -826,7 +839,7 @@ class PanHandler(BaseHTTPRequestHandler):
                 pass
 
     def _api_login(self):
-        ip = self.client_address[0]
+        ip = client_ip(self)
         allowed, wait = login_allowed(ip)
         if not allowed:
             self._log(429)
@@ -1229,7 +1242,7 @@ def banner(bind_ip, port):
     log("  %s 已启动" % CONFIG["title"])
     log("  监听地址: %s:%d" % (bind_ip, port))
     for ip in ips:
-        log("  局域网访问: http://%s:%d/" % (ip, port))
+        log("  访问地址:   http://%s:%d/" % (ip, port))
     if not ips:
         log("  本机访问:   http://127.0.0.1:%d/" % port)
     log("  上传目录:   %s" % upload_dir())
@@ -1247,8 +1260,8 @@ def try_add_firewall_rule():
         import subprocess
         subprocess.run(
             ["netsh", "advfirewall", "firewall", "add", "rule",
-             "name=PAN 局域网网盘", "dir=in", "action=allow",
-             "program=%s" % sys.executable, "enable=yes", "profile=private"],
+             "name=PAN 网盘管理器", "dir=in", "action=allow",
+             "program=%s" % sys.executable, "enable=yes", "profile=any"],
             capture_output=True, timeout=15)
     except Exception:
         pass
@@ -1314,7 +1327,7 @@ def run_server(bind_ip, port, open_browser=True, on_event=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="局域网网盘服务端")
+    parser = argparse.ArgumentParser(description="网盘服务端 (支持局域网共享与公网部署)")
     parser.add_argument("--ip", help="监听 IP (覆盖 config.json 中的设置)")
     parser.add_argument("--port", type=int, help="监听端口 (覆盖 config.json 中的设置)")
     parser.add_argument("--no-browser", action="store_true", help="启动时不自动打开浏览器")
