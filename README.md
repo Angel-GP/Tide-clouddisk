@@ -32,7 +32,7 @@
 
 ### 方式一:直接运行 exe(推荐,无需 Python)
 
-下载 Release 中的 `网盘管理器.exe`,双击运行即可。配置与上传文件保存在 exe 所在目录旁,整个文件夹可随意拷贝到其他 Windows 电脑/服务器使用。
+到 [Releases](https://github.com/Angel-GP/Tide-clouddisk/releases) 下载最新的 `网盘管理器.exe`(由 GitHub Actions 自动构建),双击运行即可。配置与上传文件保存在 exe 所在目录旁,整个文件夹可随意拷贝到其他 Windows 电脑/服务器使用。
 
 ### 方式二:源码运行(需要 Python 3.8+)
 
