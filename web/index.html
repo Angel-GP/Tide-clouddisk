@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store">
+<meta http-equiv="Pragma" content="no-cache">
+<title>Tide cloud</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📦</text></svg>">
+<style>
+:root{
+  --bg:#f4f6fa; --card:#ffffff; --line:#e4e9f2; --txt:#202938;
+  --muted:#7d8799; --pri:#3366ff; --pri-d:#1f4fd8; --ok:#17a05e; --err:#e0454f;
+  --shadow:0 2px 10px rgba(23,43,77,.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;background:var(--bg);color:var(--txt);font-size:14px;display:flex;flex-direction:column}
+.hidden{display:none!important}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:12px 22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.brand .logo{font-size:22px}
+.addr{flex:1;min-width:230px;color:var(--muted);font-size:13px;word-break:break-all}
+.userbox{display:flex;align-items:center;gap:10px}
+#userLabel{color:var(--muted);font-size:13px}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--txt);font-size:14px;cursor:pointer;text-decoration:none;transition:.15s;font-family:inherit}
+.btn:hover{border-color:var(--pri);color:var(--pri)}
+.btn.primary{background:var(--pri);border-color:var(--pri);color:#fff}
+.btn.primary:hover{background:var(--pri-d);color:#fff}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn.ghost:hover{color:var(--pri)}
+.btn.danger:hover{border-color:var(--err);color:var(--err)}
+.btn.sm{padding:4px 10px;font-size:13px;border-radius:6px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.tabs{display:flex;gap:2px;padding:0 22px;background:var(--card);border-bottom:1px solid var(--line);overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tab{flex-shrink:0;padding:12px 20px;border:none;background:transparent;font-size:15px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit;white-space:nowrap}
+.tab:hover{color:var(--pri)}
+.tab.active{color:var(--pri);border-bottom-color:var(--pri);font-weight:600}
+main{flex:1;width:100%;max-width:1100px;margin:0 auto;padding:22px}
+.toolbar{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.muted{color:var(--muted);font-size:13px}
+.badge{font-size:12px;color:var(--pri);background:#eef3ff;border:1px solid #d6e2ff;padding:2px 10px;border-radius:999px;white-space:nowrap}
+/* 查看方式切换与浏览网格 */
+.viewswitch{border:1px solid var(--line);border-radius:8px;overflow:hidden;display:inline-flex}
+.viewswitch .btn{border:none;border-radius:0;padding:4px 12px}
+.viewswitch .btn.active{background:var(--pri);color:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center;cursor:pointer;transition:.15s;display:block}
+.tile:hover{border-color:var(--pri);box-shadow:var(--shadow)}
+.tile-link{display:block;text-decoration:none;color:inherit}
+.tile-body{position:relative;height:110px;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:8px;background:#f0f3f9}
+.tile-body img{width:100%;height:100%;object-fit:cover;border-radius:8px}
+.tile-body video{width:100%;height:100%;object-fit:cover;border-radius:8px;background:#000}
+.tile-icon{font-size:52px;line-height:1}
+.tile-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:26px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.65)}
+.tile-badge{position:absolute;top:4px;right:4px}
+.tile-name{margin-top:8px;font-size:13px;line-height:1.35;height:2.7em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all}
+.tile-size{margin-top:2px;color:var(--muted);font-size:12px}
+.crumb{font-size:13px;margin-bottom:10px;min-height:18px}
+.crumb .link{color:var(--pri);cursor:pointer}
+.crumb .link:hover{text-decoration:underline}
+.files-wrap{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+table.files{width:100%;border-collapse:collapse}
+table.files th{text-align:left;font-size:13px;color:var(--muted);font-weight:600;padding:12px 14px;background:#f8fafd;border-bottom:1px solid var(--line);white-space:nowrap}
+table.files td{padding:11px 14px;border-bottom:1px solid var(--line)}
+table.files tr:last-child td{border-bottom:none}
+table.files tbody tr:hover{background:#f7f9fd}
+.fname{max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.fname:hover{color:var(--pri)}
+.ops{display:flex;gap:8px;flex-wrap:wrap}
+.empty,.notice{text-align:center;color:var(--muted);padding:60px 20px;background:var(--card);border:1px dashed var(--line);border-radius:12px}
+.notice .btn{margin-left:10px}
+#dropzone{border:2px dashed #c7d2e4;border-radius:12px;background:var(--card);padding:70px 20px;text-align:center;color:var(--muted);font-size:15px;transition:.15s}
+#dropzone.over{border-color:var(--pri);background:#f0f5ff;color:var(--pri)}
+#dropzone .btn{vertical-align:middle;margin-left:10px}
+.progress{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.bar{height:10px;background:#e8edf5;border-radius:5px;overflow:hidden}
+.bar div{height:100%;width:0;background:linear-gradient(90deg,#3f74ff,#6aa2ff);border-radius:5px;transition:width .15s}
+#progressText{display:block;margin-top:8px;color:var(--muted);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;box-shadow:var(--shadow)}
+.card h2{margin-bottom:18px;font-size:18px}
+form.card label{display:block;margin-bottom:14px;font-size:14px}
+form.card label span{display:block;margin-bottom:6px;color:var(--muted);font-size:13px}
+input[type=text],input[type=password],input[type=number]{width:100%;max-width:420px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;outline:none;background:#fff;font-family:inherit;color:var(--txt)}
+input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
+.hint{margin:-6px 0 14px;color:var(--muted);font-size:12px}
+.modal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:50}
+.modal-box{width:340px;max-width:92vw;background:#fff;border-radius:14px;padding:26px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.modal-box h2{margin-bottom:18px;font-size:18px}
+.modal-box input{width:100%;margin-bottom:12px}
+.modal-box .row{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
+.err{color:var(--err);font-size:13px;margin-top:10px;min-height:16px}
+/* 悬停预览 */
+#hoverPreview{position:fixed;z-index:80;pointer-events:auto;background:#10141d;border-radius:10px;padding:8px;box-shadow:0 10px 32px rgba(0,0,0,.55);max-width:340px}
+#hoverPreview img,#hoverPreview video{display:block;max-width:320px;max-height:260px;border-radius:6px;background:#000}
+#hoverPreview audio{width:280px}
+.toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%) translateY(20px);background:#202938;color:#fff;padding:11px 20px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:.25s;z-index:99;max-width:82vw}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.ok{background:var(--ok)}
+.toast.err{background:var(--err)}
+/* 媒体预览 */
+.media-box{position:relative;background:#10141d;border-radius:14px;padding:20px;max-width:94vw;max-height:94vh;box-shadow:0 24px 80px rgba(0,0,0,.65);display:flex;flex-direction:column;align-items:center}
+#mediaStage{display:flex;align-items:center;justify-content:center;max-width:90vw;max-height:80vh}
+#mediaStage img,#mediaStage video{max-width:88vw;max-height:78vh;border-radius:8px;background:#000}
+#mediaStage audio{min-width:300px}
+#mediaName{color:#c9d2e3;margin-top:12px;font-size:13px;max-width:80vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.media-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.14);color:#fff;border:none;font-size:28px;width:46px;height:46px;border-radius:50%;cursor:pointer;line-height:1}
+.media-nav:hover{background:rgba(255,255,255,.3)}
+.media-nav.prev{left:-56px}
+.media-nav.next{right:-56px}
+.media-nav.close{top:10px;right:10px;font-size:16px;transform:none;width:34px;height:34px}
+@media (max-width:700px){
+  /* 手机端整体布局 */
+  header{padding:10px 12px;gap:10px}
+  .brand{font-size:16px}
+  #title{max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block}
+  .addr{min-width:0;font-size:12px}
+  .tabs{padding:0 8px}
+  .tab{padding:11px 8px;font-size:13px}
+  main{padding:12px}
+  /* 文件列表: 卡片式布局, 按钮全部可见 */
+  table.files thead{display:none}
+  table.files tbody, table.files tr, table.files td{display:block;width:100%}
+  table.files tr{border-bottom:1px solid var(--line);padding:10px 0}
+  table.files tr:last-child{border-bottom:none}
+  table.files td{border:none;padding:3px 14px}
+  table.files td:nth-child(2){display:inline-block;color:var(--muted);font-size:12px;margin-right:14px}
+  table.files td:nth-child(3){display:inline-block;color:var(--muted);font-size:12px}
+  .fname{max-width:100%;font-weight:600;font-size:15px}
+  .ops{margin-top:8px}
+  .ops .btn{padding:6px 12px}
+  #dropzone{padding:44px 14px;font-size:14px}
+  .modal-box{padding:20px}
+  .media-nav.prev{left:4px;top:auto;bottom:10px;transform:none}
+  .media-nav.next{right:4px;top:auto;bottom:10px;transform:none}
+}
+/* 自定义文案编辑器 */
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="logo" id="logoIcon">📦</span><span id="title">Tide cloud</span></div>
+  <div class="addr" id="addr">正在获取地址...</div>
+  <div class="userbox">
+    <span id="userLabel" class="hidden"></span>
+    <button id="btnLogin" class="btn">登录</button>
+    <button id="btnLogout" class="btn ghost hidden">退出登录</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="files">📁 文件列表</button>
+  <button class="tab" data-tab="upload">⬆ 上传文件</button>
+  <button class="tab" data-tab="settings">⚙ 设置</button>
+</nav>
+
+<main>
+  <section id="tab-files" class="tabpane">
+    <div class="toolbar">
+      <button id="btnUpload" class="btn primary">⬆ 上传文件</button>
+      <button id="btnRefresh" class="btn ghost">🔄 刷新</button>
+      <button id="btnUp" class="btn ghost hidden">⬆ 返回上级</button>
+      <button id="btnMkdir" class="btn ghost hidden">➕ 新建文件夹</button>
+      <span class="badge" id="badgePublic">下载免登录 · 上传需登录</span>
+      <span class="viewswitch">
+        <button id="btnViewList" class="btn sm">📋 列表</button>
+        <button id="btnViewBrowse" class="btn sm">🔲 浏览</button>
+      </span>
+      <span id="fileCount" class="muted"></span>
+    </div>
+    <div class="crumb muted" id="crumb"></div>
+    <div class="files-wrap" id="filesWrap">
+      <table class="files">
+        <thead><tr><th id="colName">文件名</th><th id="colSize">大小</th><th id="colTime">修改时间</th><th id="colOps">操作</th></tr></thead>
+        <tbody id="fileBody"></tbody>
+      </table>
+    </div>
+    <div id="gridView" class="grid hidden"></div>
+    <div id="emptyTip" class="empty hidden">还没有文件, 登录后可在「上传文件」页上传</div>
+  </section>
+
+  <section id="tab-upload" class="tabpane hidden">
+    <div id="uploadNeedLogin" class="notice hidden">
+      <span id="uploadNeedLoginText">上传文件需要登录账号</span><button id="btnLogin2" class="btn primary">去登录</button>
+    </div>
+    <div id="uploadArea" class="hidden">
+      <div id="dropzone">
+        <span id="dropzoneText">把文件拖拽到这里, 或</span>
+        <label class="btn primary" id="btnChooseFile">选择文件<input type="file" id="fileInput" multiple hidden></label>
+      </div>
+      <div id="progressWrap" class="progress hidden">
+        <div class="bar"><div id="progressBar"></div></div>
+        <span id="progressText"></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-settings" class="tabpane hidden">
+    <div id="settingsNeedLogin" class="notice hidden">
+      <span id="settingsNeedLoginText">查看和修改设置需要登录</span><button id="btnLogin3" class="btn primary">去登录</button>
+    </div>
+    <div id="settingsNeedAdmin" class="notice hidden">
+      服务器设置仅管理员账号可修改
+    </div>
+    <form id="settingsForm" class="card hidden" autocomplete="off">
+      <h2 id="settingsTitleH">服务器设置</h2>
+      <label><span id="lbTitle">服务器标题</span>
+        <input type="text" id="cfgTitle" maxlength="50">
+      </label>
+      <label><span id="lbIp">监听 IP</span>
+        <input type="text" id="cfgIp" list="ipList" placeholder="0.0.0.0 / 自动">
+        <datalist id="ipList"></datalist>
+      </label>
+      <label><span id="lbPort">端口</span>
+        <input type="number" id="cfgPort" min="1" max="65535">
+      </label>
+      <label><span id="lbMax">单文件大小上限 (MB, 0 = 不限)</span>
+        <input type="number" id="cfgMax" min="0">
+      </label>
+      <label><span id="lbUploadDir">上传目录</span>
+        <input type="text" id="cfgUploadDir" maxlength="200">
+      </label>
+      <div class="hint" id="hintSettings">修改 IP 或端口后, 服务器会自动重启并跳转到新地址 (无需重新登录)。仅管理员可修改设置。</div>
+      <button type="submit" class="btn primary" id="btnSaveSettings">保存设置</button>
+    </form>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+
+<div id="hoverPreview" class="hidden"></div>
+
+<div id="loginModal" class="modal hidden">
+  <div class="modal-box">
+    <h2 id="loginTitleH">登录</h2>
+    <input type="text" id="loginUser" placeholder="用户名">
+    <input type="password" id="loginPass" placeholder="密码">
+    <div class="row">
+      <button id="btnCancelLogin" class="btn ghost">取消</button>
+      <button id="btnDoLogin" class="btn primary">登录</button>
+    </div>
+    <div id="loginMsg" class="err"></div>
+  </div>
+</div>
+
+<div id="mediaModal" class="modal hidden">
+  <div class="media-box">
+    <button id="mediaClose" class="media-nav close" title="关闭">✕</button>
+    <button id="mediaPrev" class="media-nav prev" title="上一个">‹</button>
+    <div id="mediaStage"></div>
+    <button id="mediaNext" class="media-nav next" title="下一个">›</button>
+    <div id="mediaName"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+
+  // ============ 可自定义文案 (管理员在「自定义文案」页修改) ============
+  var DEFAULT_TEXTS = {
+    brand_logo: '📦',
+    login: '登录', logout: '退出登录', logged_in_as: '已登录', admin_badge: '管理员',
+    tab_files: '📁 文件列表', tab_upload: '⬆ 上传文件', tab_settings: '⚙ 设置',
+    refresh: '🔄 刷新', badge_public: '下载免登录 · 上传需登录',
+    col_name: '文件名', col_size: '大小', col_time: '修改时间', col_ops: '操作',
+    btn_download: '下载', btn_preview: '预览', btn_copy_link: '复制链接', btn_rename: '重命名', btn_delete: '删除',
+    file_count: '共 {n} 个文件', empty_tip: '还没有文件, 登录后可在「上传文件」页上传',
+    confirm_delete: '确定删除 "{name}" 吗?', confirm_overwrite: '文件 "{name}" 已存在, 是否覆盖?',
+    rename_prompt: '请输入新的文件名',
+    upload_need_login: '上传文件需要登录账号', go_login: '去登录',
+    dropzone_text: '把文件拖拽到这里, 或', btn_choose_file: '选择文件',
+    uploading: '上传中', upload_success: '上传成功', upload_overwritten: '已覆盖',
+    upload_skipped: '已跳过', upload_failed: '上传失败', need_login_first: '请先登录',
+    settings_need_login: '查看和修改设置需要登录', settings_need_admin: '服务器设置仅管理员账号可修改',
+    settings_title: '服务器设置', field_title: '服务器标题', field_ip: '监听 IP',
+    field_port: '端口', field_max: '单文件大小上限 (MB, 0 = 不限)', field_upload_dir: '上传目录',
+    hint_settings: 'IP 留空 = 自动监听所有网卡; 修改 IP/端口后服务器自动重启并跳转到新地址。仅管理员可修改设置。',
+    btn_save_settings: '保存设置',
+    login_title: '登录', login_username: '用户名', login_password: '密码', btn_cancel: '取消',
+    login_success: '登录成功, 欢迎', login_failed: '用户名或密码错误',
+    login_error_connect: '无法连接服务器', login_error_empty: '请输入用户名和密码',
+    need_login: '需要登录', logout_done: '已退出登录', deleted: '已删除', delete_failed: '删除失败',
+    link_copied: '下载链接已复制', copy_failed: '复制失败, 链接',
+    settings_saved: '设置已保存', server_restarting: '设置已保存, 服务器重启中...',
+    port_invalid: '端口必须在 1-65535 之间', request_failed: '请求失败',
+    addr_lan: '访问地址: {url}', addr_local: '本机访问: {url}',
+    addr_unreachable: '⚠ 无法连接服务器 — 请确认电脑上的网盘程序(桌面管理端或 start.bat)正在运行',
+    rename_done: '重命名成功', rename_failed: '重命名失败',
+    preview_close: '关闭', prev_file: '上一个', next_file: '下一个',
+    not_logged_in: '未登录', server_error: '服务器异常', file_exists: '同名文件已存在',
+    btn_up: '⬆ 返回上级', root_dir: '根目录', btn_hide: '隐藏', btn_unhide: '取消隐藏',
+    hidden_mark: '已隐藏', confirm_delete_folder: '确定删除文件夹 "{name}" 及其全部内容吗? 此操作不可恢复!',
+    folder_label: '文件夹', btn_mkdir: '➕ 新建文件夹', mkdir_prompt: '请输入新文件夹名称', mkdir_done: '文件夹已创建',
+    btn_upload: '⬆ 上传文件', btn_view_list: '📋 列表', btn_view_browse: '🔲 浏览'
+  };
+  var TEXTS = {};
+
+  var titleEl=$('title'), addrEl=$('addr');
+  var btnLogin=$('btnLogin'), btnLogout=$('btnLogout'), userLabel=$('userLabel');
+  var fileBody=$('fileBody'), emptyTip=$('emptyTip'), fileCount=$('fileCount'), btnRefresh=$('btnRefresh');
+  var filesWrap=$('filesWrap'), gridView=$('gridView');
+  var btnViewList=$('btnViewList'), btnViewBrowse=$('btnViewBrowse');
+  var btnUp=$('btnUp'), btnMkdir=$('btnMkdir'), crumb=$('crumb');
+  var btnUpload=$('btnUpload');
+  var uploadNeedLogin=$('uploadNeedLogin'), uploadArea=$('uploadArea'), dropzone=$('dropzone'), fileInput=$('fileInput');
+  var progressWrap=$('progressWrap'), progressBar=$('progressBar'), progressText=$('progressText');
+  var settingsNeedLogin=$('settingsNeedLogin'), settingsNeedAdmin=$('settingsNeedAdmin'), settingsForm=$('settingsForm');
+  var cfgTitle=$('cfgTitle'), cfgIp=$('cfgIp'), ipList=$('ipList'), cfgPort=$('cfgPort'), cfgMax=$('cfgMax'), cfgUploadDir=$('cfgUploadDir');
+  var loginModal=$('loginModal'), loginUser=$('loginUser'), loginPass=$('loginPass'), loginMsg=$('loginMsg');
+  var btnDoLogin=$('btnDoLogin'), btnCancelLogin=$('btnCancelLogin');
+  var mediaModal=$('mediaModal'), mediaStage=$('mediaStage'), mediaName=$('mediaName');
+  var mediaPrev=$('mediaPrev'), mediaNext=$('mediaNext'), mediaClose=$('mediaClose');
+  var hoverEl=$('hoverPreview');
+  var toastEl=$('toast');
+
+  var token = localStorage.getItem('pan_token') || '';
+  var currentTab = 'files';
+  var toastTimer = null;
+  var currentFiles = [];
+  var mediaFiles = [];
+  var mediaIndex = -1;
+  var viewMode = localStorage.getItem('pan_view') === 'browse' ? 'browse' : 'list';
+
+  // ---------- 工具 ----------
+  function t(k){
+    var v = TEXTS[k] || DEFAULT_TEXTS[k] || k;
+    if (String(v).trim().toLowerCase() === 'null') return '';
+    return v;
+  }
+  function tHide(k){
+    return String(TEXTS[k] || '').trim().toLowerCase() === 'null';
+  }
+  function fmtSize(n){
+    if (n == null) return '-';
+    if (n < 1024) return n + ' B';
+    var u = ['KB','MB','GB','TB'], i = -1;
+    do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+    return n.toFixed(n >= 100 ? 0 : 1) + ' ' + u[i];
+  }
+  function fmtTime(s){ return new Date(s * 1000).toLocaleString('zh-CN', {hour12:false}); }
+  function toast(msg, type){
+    toastEl.textContent = msg;
+    toastEl.className = 'toast show' + (type === 'ok' ? ' ok' : type === 'err' ? ' err' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toastEl.className = 'toast hidden'; }, 3200);
+  }
+  function copyText(text){
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      return navigator.clipboard.writeText(text).then(function(){ return true; }).catch(function(){ return fallbackCopy(text); });
+    }
+    return Promise.resolve(fallbackCopy(text));
+  }
+  function fallbackCopy(text){
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    var okc = false;
+    try { okc = document.execCommand('copy'); } catch(e){}
+    document.body.removeChild(ta);
+    return okc;
+  }
+  function api(path, opts){
+    opts = opts || {};
+    var o = {};
+    for (var k in opts) o[k] = opts[k];
+    o.headers = o.headers || {};
+    if (token) o.headers['X-Auth-Token'] = token;
+    return fetch(path, o).then(function(r){
+      if (r.status === 401){
+        token = '';
+        localStorage.removeItem('pan_token');
+        localStorage.removeItem('pan_user');
+        localStorage.removeItem('pan_admin');
+        updateUserUI();
+        openLogin();
+        throw new Error(t('need_login'));
+      }
+      return r.json().catch(function(){ return null; }).then(function(data){
+        if (!data || data.ok === false) throw new Error((data && data.msg) || (t('request_failed') + ' (' + r.status + ')'));
+        return data;
+      });
+    });
+  }
+
+  // ---------- 文案应用 ----------
+  function setEl(el, key){
+    if (tHide(key)){ el.classList.add('hidden'); }
+    else { el.classList.remove('hidden'); el.textContent = t(key); }
+  }
+  function applyTexts(){
+    setEl(btnLogin, 'login');
+    setEl(btnLogout, 'logout');
+    setEl($('logoIcon'), 'brand_logo');
+    document.querySelectorAll('.tab').forEach(function(tab){
+      var key = {files:'tab_files', upload:'tab_upload', settings:'tab_settings'}[tab.getAttribute('data-tab')];
+      if (key) setEl(tab, key);
+    });
+    setEl(btnRefresh, 'refresh');
+    setEl(btnUpload, 'btn_upload');
+    setEl(btnUp, 'btn_up');
+    setEl(btnMkdir, 'btn_mkdir');
+    setEl(btnViewList, 'btn_view_list');
+    setEl(btnViewBrowse, 'btn_view_browse');
+    setEl($('badgePublic'), 'badge_public');
+    setEl($('colName'), 'col_name');
+    setEl($('colSize'), 'col_size');
+    setEl($('colTime'), 'col_time');
+    setEl($('colOps'), 'col_ops');
+    setEl(emptyTip, 'empty_tip');
+    setEl($('uploadNeedLoginText'), 'upload_need_login');
+    setEl($('btnLogin2'), 'go_login');
+    setEl($('dropzoneText'), 'dropzone_text');
+    var lbl = $('btnChooseFile');
+    if (tHide('btn_choose_file')){ lbl.classList.add('hidden'); }
+    else { lbl.classList.remove('hidden'); lbl.firstChild.textContent = t('btn_choose_file'); }
+    setEl($('settingsNeedLoginText'), 'settings_need_login');
+    setEl($('btnLogin3'), 'go_login');
+    setEl(settingsNeedAdmin, 'settings_need_admin');
+    setEl($('settingsTitleH'), 'settings_title');
+    setEl($('lbTitle'), 'field_title');
+    setEl($('lbIp'), 'field_ip');
+    setEl($('lbPort'), 'field_port');
+    setEl($('lbMax'), 'field_max');
+    setEl($('lbUploadDir'), 'field_upload_dir');
+    setEl($('hintSettings'), 'hint_settings');
+    setEl($('btnSaveSettings'), 'btn_save_settings');
+    setEl($('loginTitleH'), 'login_title');
+    loginUser.placeholder = t('login_username');
+    loginPass.placeholder = t('login_password');
+    setEl(btnCancelLogin, 'btn_cancel');
+    setEl(btnDoLogin, 'login');
+    mediaClose.title = t('preview_close');
+    mediaPrev.title = t('prev_file');
+    mediaNext.title = t('next_file');
+    updateUserUI();
+  }
+
+  // ---------- 文件列表与文件夹导航 ----------
+  var currentPath = '';
+  function relOf(name){ return currentPath ? currentPath + '/' + name : name; }
+  function fileUrl(name){
+    return 'files/' + relOf(name).split('/').map(encodeURIComponent).join('/');
+  }
+  function refreshFiles(){
+    api('/api/list?path=' + encodeURIComponent(currentPath))
+      .then(function(d){ renderFiles(d.files || []); })
+      .catch(function(){});
+  }
+  function updateCrumb(){
+    crumb.innerHTML = '';
+    var root = document.createElement('span');
+    root.className = 'link';
+    root.textContent = t('root_dir');
+    root.onclick = function(){ currentPath = ''; refreshFiles(); };
+    crumb.appendChild(root);
+    var parts = currentPath ? currentPath.split('/') : [];
+    var acc = [];
+    parts.forEach(function(p){
+      acc.push(p);
+      var sep = document.createElement('span');
+      sep.textContent = ' / ';
+      crumb.appendChild(sep);
+      var sp = document.createElement('span');
+      sp.className = 'link';
+      sp.textContent = p;
+      sp.onclick = (function(path){ return function(){ currentPath = path; refreshFiles(); }; })(acc.join('/'));
+      crumb.appendChild(sp);
+    });
+    btnUp.classList.toggle('hidden', !currentPath || tHide('btn_up'));
+  }
+  function enterDir(name){
+    currentPath = relOf(name);
+    refreshFiles();
+  }
+  function upDir(){
+    var parts = currentPath.split('/');
+    parts.pop();
+    currentPath = parts.join('/');
+    refreshFiles();
+  }
+  function isMedia(name){
+    return /\.(mp4|m4v|webm|ogv|mov|mp3|wav|flac|ogg|m4a|aac|jpe?g|png|gif|webp|bmp|svg|ico)$/i.test(name);
+  }
+  function isImage(n){ return /\.(jpe?g|png|gif|webp|bmp|svg|ico)$/i.test(n); }
+  function isVideo(n){ return /\.(mp4|m4v|webm|ogv|mov)$/i.test(n); }
+  function isAudio(n){ return /\.(mp3|wav|flac|ogg|m4a|aac)$/i.test(n); }
+  function isArchive(n){ return /\.(zip|rar|7z|tar|gz|bz2|xz|iso|jar)$/i.test(n); }
+  function previewUrl(rel){ return 'preview/' + rel.split('/').map(encodeURIComponent).join('/'); }
+  function setView(mode){
+    viewMode = mode;
+    localStorage.setItem('pan_view', mode);
+    btnViewList.classList.toggle('active', mode === 'list');
+    btnViewBrowse.classList.toggle('active', mode === 'browse');
+    filesWrap.classList.toggle('hidden', mode !== 'list');
+    gridView.classList.toggle('hidden', mode !== 'browse');
+    renderFiles(currentFiles);
+  }
+  function renderFiles(files){
+    currentFiles = files;
+    fileBody.innerHTML = '';
+    gridView.innerHTML = '';
+    emptyTip.classList.toggle('hidden', files.length > 0 || tHide('empty_tip'));
+    fileCount.textContent = files.length ? t('file_count').split('{n}').join(files.length) : '';
+    updateCrumb();
+    if (viewMode === 'browse'){ renderGrid(files); } else { renderList(files); }
+  }
+  function renderList(files){
+    var isAdmin = localStorage.getItem('pan_admin') === '1';
+    files.forEach(function(f){
+      var tr = document.createElement('tr');
+      var tdName = document.createElement('td');
+      tdName.className = 'fname'; tdName.title = f.name;
+      if (f.is_dir){
+        tdName.textContent = '📁 ' + f.name;
+        tdName.onclick = function(){ enterDir(f.name); };
+      } else {
+        tdName.textContent = f.name;
+        tdName.onclick = isMedia(f.name) ? function(){ openMedia(f.name); } : null;
+      }
+      if (!f.is_dir && isMedia(f.name)){
+        tdName.addEventListener('mouseenter', function(ev){ hoverPreviewOn(f.name, ev); });
+        tdName.addEventListener('mouseleave', hoverNameLeave);
+      }
+      if (f.hidden && !tHide('hidden_mark')){
+        var hb = document.createElement('span');
+        hb.className = 'badge';
+        hb.style.marginLeft = '8px';
+        hb.textContent = t('hidden_mark');
+        tdName.appendChild(hb);
+        tr.style.opacity = '0.65';
+      }
+      var tdSize = document.createElement('td');
+      tdSize.textContent = f.is_dir ? t('folder_label') : fmtSize(f.size);
+      var tdTime = document.createElement('td'); tdTime.textContent = fmtTime(f.mtime);
+      var tdOps = document.createElement('td'); tdOps.className = 'ops';
+      if (!f.is_dir){
+        if (!tHide('btn_download')){
+          var a = document.createElement('a');
+          a.href = fileUrl(f.name);
+          a.className = 'btn sm'; a.textContent = t('btn_download');
+          tdOps.appendChild(a);
+        }
+        if (isMedia(f.name)) addOpBtn(tdOps, '', 'btn_preview', function(){ openMedia(f.name); });
+        addOpBtn(tdOps, 'ghost', 'btn_copy_link', function(){ copyLink(f.name); });
+      }
+      if (isAdmin){
+        addOpBtn(tdOps, 'ghost', 'btn_rename', function(){ renameFile(f.name); });
+        addOpBtn(tdOps, 'ghost', f.hidden ? 'btn_unhide' : 'btn_hide', function(){ toggleHide(f.name, !f.hidden); });
+      }
+      addOpBtn(tdOps, 'danger', 'btn_delete', function(){ delFile(f.name, !!f.is_dir); });
+      tr.appendChild(tdName); tr.appendChild(tdSize); tr.appendChild(tdTime); tr.appendChild(tdOps);
+      fileBody.appendChild(tr);
+    });
+  }
+  function renderGrid(files){
+    files.forEach(function(f){
+      var tile = document.createElement('div');
+      tile.className = 'tile';
+      var body = document.createElement('div');
+      body.className = 'tile-body';
+      if (f.is_dir){
+        var icD = document.createElement('div');
+        icD.className = 'tile-icon'; icD.textContent = '📁';
+        body.appendChild(icD);
+      } else if (isImage(f.name)){
+        var im = document.createElement('img');
+        im.src = previewUrl(relOf(f.name));
+        im.loading = 'lazy';
+        body.appendChild(im);
+      } else if (isVideo(f.name)){
+        var vd = document.createElement('video');
+        vd.src = previewUrl(relOf(f.name)) + '#t=0.1';
+        vd.muted = true; vd.playsInline = true; vd.preload = 'metadata';
+        body.appendChild(vd);
+        var play = document.createElement('div');
+        play.className = 'tile-play'; play.textContent = '▶';
+        body.appendChild(play);
+      } else if (isAudio(f.name)){
+        var icA = document.createElement('div');
+        icA.className = 'tile-icon'; icA.textContent = '🎵';
+        body.appendChild(icA);
+      } else if (isArchive(f.name)){
+        var icZ = document.createElement('div');
+        icZ.className = 'tile-icon'; icZ.textContent = '📦';
+        body.appendChild(icZ);
+      } else {
+        var icF = document.createElement('div');
+        icF.className = 'tile-icon'; icF.textContent = '📄';
+        body.appendChild(icF);
+      }
+      if (f.hidden && !tHide('hidden_mark')){
+        var hb = document.createElement('span');
+        hb.className = 'badge tile-badge';
+        hb.textContent = t('hidden_mark');
+        body.appendChild(hb);
+      }
+      var nm = document.createElement('div');
+      nm.className = 'tile-name';
+      nm.textContent = f.name;
+      nm.title = f.name;
+      var sz = document.createElement('div');
+      sz.className = 'tile-size';
+      sz.textContent = f.is_dir ? t('folder_label') : fmtSize(f.size);
+      tile.appendChild(body);
+      tile.appendChild(nm);
+      tile.appendChild(sz);
+      if (f.is_dir){
+        tile.onclick = function(){ enterDir(f.name); };
+        gridView.appendChild(tile);
+      } else if (isMedia(f.name)){
+        tile.onclick = function(){ openMedia(f.name); };
+        gridView.appendChild(tile);
+      } else {
+        var a = document.createElement('a');
+        a.href = fileUrl(f.name);
+        a.className = 'tile-link';
+        a.appendChild(tile);
+        gridView.appendChild(a);
+      }
+    });
+  }
+  function addOpBtn(ops, cls, key, onclick){
+    if (tHide(key)) return;
+    var b = document.createElement('button');
+    b.className = 'btn sm ' + (cls || '');
+    b.textContent = t(key);
+    b.onclick = onclick;
+    ops.appendChild(b);
+  }
+  function copyLink(name){
+    var url = location.origin + '/' + fileUrl(name);
+    copyText(url).then(function(okc){
+      toast(okc ? t('link_copied') : (t('copy_failed') + ': ' + url), okc ? 'ok' : 'err');
+    });
+  }
+  function delFile(name, isDir){
+    var msg = isDir ? t('confirm_delete_folder').split('{name}').join(name) : t('confirm_delete').split('{name}').join(name);
+    if (!confirm(msg)) return;
+    api('/api/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: relOf(name)})})
+      .then(function(){ toast(t('deleted') + ': ' + name, 'ok'); refreshFiles(); })
+      .catch(function(e){ toast(t('delete_failed') + ': ' + e.message, 'err'); });
+  }
+  function renameFile(name){
+    var nn = prompt(t('rename_prompt'), name);
+    if (nn == null) return;
+    nn = nn.trim();
+    if (!nn || nn === name) return;
+    api('/api/rename', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: relOf(name), new_name: nn})})
+      .then(function(){ toast(t('rename_done'), 'ok'); refreshFiles(); })
+      .catch(function(e){ toast(t('rename_failed') + ': ' + e.message, 'err'); });
+  }
+  function toggleHide(name, hidden){
+    api('/api/hide', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: relOf(name), hidden: hidden})})
+      .then(function(){
+        toast((hidden ? t('hidden_mark') : t('btn_unhide')) + ': ' + name, 'ok');
+        refreshFiles();
+      })
+      .catch(function(e){ toast(e.message, 'err'); });
+  }
+  function mkdir(){
+    var nn = prompt(t('mkdir_prompt'), '');
+    if (nn == null) return;
+    nn = nn.trim();
+    if (!nn) return;
+    api('/api/mkdir', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: relOf(nn)})})
+      .then(function(){ toast(t('mkdir_done') + ': ' + nn, 'ok'); refreshFiles(); })
+      .catch(function(e){ toast(e.message, 'err'); });
+  }
+
+  // ---------- 媒体预览 ----------
+  var hoverCache = {};
+  var hoverTimer = null;
+  var hoverRect = null;
+  var hoverLeaveTimer = null;
+  function clearHover(){
+    if (hoverTimer){ clearTimeout(hoverTimer); hoverTimer = null; }
+    if (hoverLeaveTimer){ clearTimeout(hoverLeaveTimer); hoverLeaveTimer = null; }
+    hoverEl.classList.add('hidden');
+    hoverEl.innerHTML = '';
+    Object.keys(hoverCache).forEach(function(k){
+      var m = hoverCache[k];
+      if (m && (m.tagName === 'VIDEO' || m.tagName === 'AUDIO')){ try{ m.pause(); }catch(e){} }
+    });
+  }
+  function hoverNameLeave(){
+    if (hoverLeaveTimer) clearTimeout(hoverLeaveTimer);
+    hoverLeaveTimer = setTimeout(clearHover, 150);
+  }
+  function hoverPreviewOn(name, ev){
+    if (!isMedia(name)) return;
+    // 仅支持真鼠标悬停的设备 (触屏无 hover)
+    if (window.matchMedia && !window.matchMedia('(hover: hover)').matches) return;
+    hoverRect = ev.currentTarget.getBoundingClientRect();
+    clearHover();
+    hoverTimer = setTimeout(function(){ showHover(name); }, 300);
+  }
+  function showHover(name){
+    var rel = relOf(name);
+    var ext = name.split('.').pop().toLowerCase();
+    var el = hoverCache[rel];
+    if (!el){
+      var url = 'preview/' + rel.split('/').map(encodeURIComponent).join('/');
+      if (['mp4','m4v','webm','ogv','mov'].indexOf(ext) >= 0){
+        el = document.createElement('video');
+        el.src = url; el.muted = true; el.autoplay = true; el.loop = true;
+      } else if (['mp3','wav','flac','ogg','m4a','aac'].indexOf(ext) >= 0){
+        el = document.createElement('audio');
+        el.src = url; el.muted = true; el.autoplay = true; el.loop = true; el.controls = true;
+      } else {
+        el = document.createElement('img');
+        el.src = url;
+      }
+      hoverCache[rel] = el;
+    }
+    if (el.tagName === 'VIDEO'){ try{ el.play(); }catch(e){} }
+    hoverEl.innerHTML = '';
+    hoverEl.appendChild(el);
+    var w = hoverEl.offsetWidth || 336;
+    var h = hoverEl.offsetHeight || 276;
+    var x = hoverRect ? hoverRect.right + 12 : 20;
+    var y = hoverRect ? hoverRect.top : 20;
+    if (x + w > window.innerWidth - 8) x = (hoverRect ? hoverRect.left - w - 12 : 8);
+    if (x < 8) x = 8;
+    if (y + h > window.innerHeight - 8) y = window.innerHeight - h - 8;
+    if (y < 8) y = 8;
+    hoverEl.style.left = x + 'px';
+    hoverEl.style.top = y + 'px';
+    hoverEl.classList.remove('hidden');
+  }
+  function openMedia(name){
+    clearHover();
+    var rel = relOf(name);
+    mediaFiles = currentFiles.filter(function(f){ return !f.is_dir && isMedia(f.name); }).map(function(f){ return relOf(f.name); });
+    mediaIndex = mediaFiles.indexOf(rel);
+    if (mediaIndex < 0) return;
+    showMedia();
+    mediaModal.classList.remove('hidden');
+  }
+  function showMedia(){
+    var rel = mediaFiles[mediaIndex];
+    var name = rel.split('/').pop();
+    mediaName.textContent = rel;
+    mediaStage.innerHTML = '';
+    var ext = name.split('.').pop().toLowerCase();
+    var url = 'preview/' + rel.split('/').map(encodeURIComponent).join('/');
+    var el;
+    if (['mp4','m4v','webm','ogv','mov'].indexOf(ext) >= 0){
+      el = document.createElement('video'); el.src = url; el.controls = true; el.autoplay = true;
+    } else if (['mp3','wav','flac','ogg','m4a','aac'].indexOf(ext) >= 0){
+      el = document.createElement('audio'); el.src = url; el.controls = true; el.autoplay = true;
+    } else {
+      el = document.createElement('img'); el.src = url;
+    }
+    mediaStage.appendChild(el);
+    var multi = mediaFiles.length > 1;
+    mediaPrev.style.visibility = multi ? 'visible' : 'hidden';
+    mediaNext.style.visibility = multi ? 'visible' : 'hidden';
+  }
+  function closeMedia(){
+    mediaModal.classList.add('hidden');
+    mediaStage.innerHTML = '';
+  }
+  function mediaNav(delta){
+    mediaIndex = (mediaIndex + delta + mediaFiles.length) % mediaFiles.length;
+    showMedia();
+  }
+
+  // ---------- 登录 ----------
+  function updateUserUI(){
+    var logged = !!token;
+    var isAdmin = localStorage.getItem('pan_admin') === '1';
+    btnLogin.classList.toggle('hidden', logged || tHide('login'));
+    btnLogout.classList.toggle('hidden', !logged || tHide('logout'));
+    userLabel.classList.toggle('hidden', !logged || tHide('logged_in_as'));
+    userLabel.textContent = logged
+      ? (t('logged_in_as') + ': ' + localStorage.getItem('pan_user') + (isAdmin ? ' (' + t('admin_badge') + ')' : ''))
+      : '';
+    uploadNeedLogin.classList.toggle('hidden', logged || tHide('upload_need_login'));
+    uploadArea.classList.toggle('hidden', !logged);
+    btnUpload.classList.toggle('hidden', !logged || tHide('btn_upload'));
+    btnMkdir.classList.toggle('hidden', !logged || tHide('btn_mkdir'));
+    settingsNeedLogin.classList.toggle('hidden', logged || tHide('settings_need_login'));
+    settingsNeedAdmin.classList.toggle('hidden', (logged && isAdmin) || tHide('settings_need_admin'));
+    settingsForm.classList.toggle('hidden', !(logged && isAdmin));
+  }
+  function openLogin(){
+    loginModal.classList.remove('hidden');
+    loginMsg.textContent = '';
+    loginUser.value = localStorage.getItem('pan_user') || '';
+    setTimeout(function(){ (loginUser.value ? loginPass : loginUser).focus(); }, 50);
+  }
+  function closeLogin(){
+    loginModal.classList.add('hidden');
+    loginPass.value = '';
+  }
+  function doLogin(){
+    var user = loginUser.value.trim(), pass = loginPass.value;
+    if (!user || !pass){ loginMsg.textContent = t('login_error_empty'); return; }
+    btnDoLogin.disabled = true;
+    loginMsg.textContent = '';
+    fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({username:user, password:pass})})
+      .then(function(r){ return r.json().catch(function(){ return null; }); })
+      .then(function(data){
+        if (data && data.ok){
+          token = data.token;
+          localStorage.setItem('pan_token', token);
+          localStorage.setItem('pan_user', data.username);
+          localStorage.setItem('pan_admin', data.is_admin ? '1' : '');
+          closeLogin();
+          updateUserUI();
+          toast(t('login_success') + ' ' + data.username, 'ok');
+          refreshFiles();
+          if (currentTab === 'settings') loadSettings();
+        } else {
+          loginMsg.textContent = (data && data.msg) || t('login_failed');
+        }
+      })
+      .catch(function(){ loginMsg.textContent = t('login_error_connect'); })
+      .then(function(){ btnDoLogin.disabled = false; });
+  }
+  function doLogout(){
+    api('/api/logout', {method:'POST'}).catch(function(){});
+    token = '';
+    localStorage.removeItem('pan_token');
+    localStorage.removeItem('pan_user');
+    localStorage.removeItem('pan_admin');
+    updateUserUI();
+    toast(t('logout_done'));
+  }
+
+  // ---------- 上传 ----------
+  function setProgress(loaded, total, name){
+    if (loaded == null){
+      progressWrap.classList.add('hidden');
+      progressBar.style.width = '0';
+      progressText.textContent = '';
+      return;
+    }
+    progressWrap.classList.remove('hidden');
+    var pct = total > 0 ? Math.round(loaded / total * 100) : 100;
+    progressBar.style.width = pct + '%';
+    progressText.textContent = t('uploading') + ': ' + name + '  ' + fmtSize(loaded) + ' / ' + fmtSize(total) + '  (' + pct + '%)';
+  }
+  function uploadFile(file, overwrite){
+    return new Promise(function(resolve, reject){
+      var xhr = new XMLHttpRequest();
+      var url = '/api/upload?name=' + encodeURIComponent(file.name) + (overwrite ? '&overwrite=1' : '') + (currentPath ? '&path=' + encodeURIComponent(currentPath) : '');
+      xhr.open('POST', url);
+      xhr.setRequestHeader('X-Auth-Token', token);
+      xhr.upload.onprogress = function(e){
+        if (e.lengthComputable) setProgress(e.loaded, e.total, file.name);
+      };
+      xhr.onload = function(){
+        var data = null;
+        try { data = JSON.parse(xhr.responseText); } catch(e){}
+        resolve({status: xhr.status, data: data});
+      };
+      xhr.onerror = function(){ reject(new Error(t('request_failed'))); };
+      xhr.send(file);
+    });
+  }
+  function handleFiles(list){
+    var files = Array.prototype.slice.call(list || []);
+    if (!files.length) return;
+    if (!token){ openLogin(); toast(t('need_login_first'), 'err'); return; }
+    var chain = Promise.resolve();
+    files.forEach(function(f){
+      chain = chain.then(function(){ return uploadOne(f); });
+    });
+    chain.then(function(){
+      setProgress(null);
+      refreshFiles();
+    });
+  }
+  function uploadOne(f){
+    return uploadFile(f, false).then(function(r){
+      if (r.status === 200){
+        toast(t('upload_success') + ': ' + f.name, 'ok');
+      } else if (r.status === 409){
+        if (confirm(t('confirm_overwrite').split('{name}').join(f.name))){
+          return uploadFile(f, true).then(function(r2){
+            if (r2.status === 200) toast(t('upload_overwritten') + ': ' + f.name, 'ok');
+            else if (r2.status === 401){ openLogin(); toast(t('need_login'), 'err'); }
+            else toast((r2.data && r2.data.msg) || t('upload_failed'), 'err');
+          });
+        } else {
+          toast(t('upload_skipped') + ': ' + f.name);
+        }
+      } else if (r.status === 401){
+        openLogin(); toast(t('need_login'), 'err');
+      } else if (r.status === 413){
+        toast((r.data && r.data.msg) || t('upload_failed'), 'err');
+      } else {
+        toast((r.data && r.data.msg) || (t('upload_failed') + ' (' + r.status + ')'), 'err');
+      }
+    }).catch(function(e){
+      toast(t('upload_failed') + ': ' + e.message, 'err');
+    });
+  }
+
+  // ---------- 设置 ----------
+  function loadSettings(){
+    api('/api/settings').then(function(d){
+      cfgTitle.value = d.title;
+      cfgIp.value = d.ip || '';
+      cfgPort.value = d.port;
+      cfgMax.value = d.max_upload_mb;
+      cfgUploadDir.value = d.upload_dir || 'uploads';
+      ipList.innerHTML = '';
+      var opts = [''].concat(d.addresses || []);
+      opts.forEach(function(ip){
+        var o = document.createElement('option');
+        o.value = ip;
+        ipList.appendChild(o);
+      });
+    }).catch(function(e){ toast(e.message || t('server_error'), 'err'); });
+  }
+  function saveSettings(ev){
+    ev.preventDefault();
+    var body = {
+      title: cfgTitle.value.trim(),
+      ip: cfgIp.value.trim(),
+      port: parseInt(cfgPort.value, 10),
+      max_upload_mb: parseInt(cfgMax.value, 10) || 0,
+      upload_dir: cfgUploadDir.value.trim() || 'uploads'
+    };
+    if (!body.port || body.port < 1 || body.port > 65535){ toast(t('port_invalid'), 'err'); return; }
+    api('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+      .then(function(d){
+        if (d.restart){
+          toast(t('server_restarting'));
+          waitAndGo(d.url, 30);
+        } else {
+          toast(t('settings_saved'), 'ok');
+        }
+      })
+      .catch(function(e){ toast(e.message || t('server_error'), 'err'); });
+  }
+  function waitAndGo(url, tries){
+    setTimeout(function(){
+      fetch(url + 'api/info').then(function(r){
+        if (r.ok){ location.href = url; }
+        else if (tries > 0){ waitAndGo(url, tries - 1); }
+      }).catch(function(){
+        if (tries > 0) waitAndGo(url, tries - 1);
+      });
+    }, 1000);
+  }
+
+  // ---------- 标签页 ----------
+  function switchTab(name){
+    currentTab = name;
+    var tabs = document.querySelectorAll('.tab');
+    for (var i = 0; i < tabs.length; i++){
+      tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === name);
+    }
+    var panes = document.querySelectorAll('.tabpane');
+    for (var j = 0; j < panes.length; j++){
+      panes[j].classList.toggle('hidden', panes[j].id !== 'tab-' + name);
+    }
+    var isAdmin = localStorage.getItem('pan_admin') === '1';
+    if (name === 'settings' && token && isAdmin) loadSettings();
+  }
+
+  // ---------- 初始化 ----------
+  function checkSession(){
+    fetch('/api/session', {headers: token ? {'X-Auth-Token': token} : {}})
+      .then(function(r){ return r.json().catch(function(){ return null; }); })
+      .then(function(d){
+        if (d && d.logged){
+          token = d.token || token;
+          localStorage.setItem('pan_token', token);
+          localStorage.setItem('pan_user', d.username);
+          localStorage.setItem('pan_admin', d.is_admin ? '1' : '');
+        } else {
+          token = '';
+          localStorage.removeItem('pan_token');
+          localStorage.removeItem('pan_user');
+          localStorage.removeItem('pan_admin');
+        }
+        updateUserUI();
+        refreshFiles();
+      })
+      .catch(function(){
+        updateUserUI();
+        refreshFiles();
+      });
+  }
+  function init(){
+    fetch('/api/info').then(function(r){ return r.json(); }).then(function(d){
+      if (!d || !d.ok) return;
+      TEXTS = {};
+      Object.keys(DEFAULT_TEXTS).forEach(function(k){ TEXTS[k] = DEFAULT_TEXTS[k]; });
+      Object.keys(d.texts || {}).forEach(function(k){ TEXTS[k] = d.texts[k]; });
+      document.title = d.title;
+      titleEl.textContent = d.title;
+      var addrs = (d.addresses || []).map(function(ip){ return 'http://' + ip + ':' + d.port; });
+      addrEl.textContent = addrs.length
+        ? t('addr_lan').split('{url}').join(addrs.join('  ·  '))
+        : t('addr_local').split('{url}').join('http://127.0.0.1:' + d.port);
+      applyTexts();
+    }).catch(function(){
+      addrEl.textContent = t('addr_unreachable');
+    });
+    setView(viewMode);
+    checkSession();
+  }
+
+  // ---------- 事件绑定 ----------
+  document.querySelectorAll('.tab').forEach(function(tab){
+    tab.addEventListener('click', function(){ switchTab(tab.getAttribute('data-tab')); });
+  });
+  btnRefresh.addEventListener('click', refreshFiles);
+  btnViewList.addEventListener('click', function(){ setView('list'); });
+  btnViewBrowse.addEventListener('click', function(){ setView('browse'); });
+  btnUpload.addEventListener('click', function(){
+    if (!token){ openLogin(); toast(t('need_login_first'), 'err'); return; }
+    fileInput.click();
+  });
+  btnUp.addEventListener('click', upDir);
+  btnMkdir.addEventListener('click', mkdir);
+  btnLogin.addEventListener('click', openLogin);
+  btnLogin2.addEventListener('click', openLogin);
+  btnLogin3.addEventListener('click', openLogin);
+  btnLogout.addEventListener('click', doLogout);
+  btnCancelLogin.addEventListener('click', closeLogin);
+  btnDoLogin.addEventListener('click', doLogin);
+  loginPass.addEventListener('keydown', function(e){ if (e.key === 'Enter') doLogin(); });
+  loginModal.addEventListener('click', function(e){ if (e.target === loginModal) closeLogin(); });
+  settingsForm.addEventListener('submit', saveSettings);
+  fileInput.addEventListener('change', function(){ handleFiles(fileInput.files); fileInput.value = ''; });
+  ['dragenter','dragover'].forEach(function(ev){
+    dropzone.addEventListener(ev, function(e){ e.preventDefault(); dropzone.classList.add('over'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    dropzone.addEventListener(ev, function(e){ e.preventDefault(); dropzone.classList.remove('over'); });
+  });
+  dropzone.addEventListener('drop', function(e){
+    if (!token){ openLogin(); toast(t('need_login_first'), 'err'); return; }
+    handleFiles(e.dataTransfer.files);
+  });
+  dropzone.addEventListener('click', function(e){
+    if (!token){ e.preventDefault(); openLogin(); toast(t('need_login_first'), 'err'); }
+  });
+  mediaClose.addEventListener('click', closeMedia);
+  mediaPrev.addEventListener('click', function(){ mediaNav(-1); });
+  mediaNext.addEventListener('click', function(){ mediaNav(1); });
+  window.addEventListener('scroll', clearHover);
+  hoverEl.addEventListener('mouseenter', function(){
+    if (hoverLeaveTimer){ clearTimeout(hoverLeaveTimer); hoverLeaveTimer = null; }
+  });
+  hoverEl.addEventListener('mouseleave', clearHover);
+  mediaModal.addEventListener('click', function(e){ if (e.target === mediaModal) closeMedia(); });
+  document.addEventListener('keydown', function(e){
+    if (mediaModal.classList.contains('hidden')) return;
+    if (e.key === 'Escape') closeMedia();
+    else if (e.key === 'ArrowLeft') mediaNav(-1);
+    else if (e.key === 'ArrowRight') mediaNav(1);
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>

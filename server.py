@@ -1,0 +1,1350 @@
+# -*- coding: utf-8 -*-
+"""
+网盘服务端 —— 纯 Python 标准库实现, 无需安装任何第三方依赖
+
+支持两种部署场景:
+  * 局域网共享: 同一网络内的手机/电脑通过浏览器访问
+  * 公网服务器部署: 部署在云服务器/公网主机上, 任何人可通过公网地址访问
+    (推荐前置 Nginx/Caddy 做 HTTPS 反向代理, 并设置强密码)
+
+功能:
+  * 自动识别本机 IP, 启动后自动打开浏览器
+  * 多账号体系: 管理员可添加/删除账号、重置密码、授予管理权限
+  * 可设置: 监听 IP / 端口 / 标题 / 上传大小上限 (管理员)
+  * 浏览、下载: 无需登录 (下载支持断点续传)
+  * 上传、删除: 需要登录; 设置、账号管理: 需要管理员
+
+用法:
+  python server.py [--ip 0.0.0.0] [--port 8000] [--no-browser]
+
+首次启动自动创建 config.json, 默认账号: admin / admin123 (请尽快修改)
+"""
+
+import argparse
+import hashlib
+import http.cookies
+import json
+import os
+import re
+import secrets
+import shutil
+import socket
+import sys
+import threading
+import time
+import urllib.parse
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# ----------------------------------------------------------------------------
+# 基础配置
+# ----------------------------------------------------------------------------
+if getattr(sys, "frozen", False):
+    # PyInstaller 打包运行: 配置与上传目录放在 exe 旁边(持久), 网页资源在打包临时目录
+    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    RES_DIR = getattr(sys, "_MEIPASS", APP_DIR)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    RES_DIR = APP_DIR
+
+BASE_DIR = APP_DIR
+WEB_DIR = os.path.join(RES_DIR, "web")
+CONFIG_PATH = os.path.join(APP_DIR, "config.json")
+
+DEFAULTS = {
+    "ip": "",                # 监听 IP, 空 = 0.0.0.0 (自动)
+    "port": 8000,            # 监听端口
+    "title": "Tide cloud",    # 页面标题
+    "max_upload_mb": 2048,   # 单文件上传上限 (MB), 0 = 不限
+    "upload_dir": "uploads", # 文件保存目录 (相对程序目录)
+    "users": [],             # 账号列表: [{"username","salt","password_hash","is_admin"}]
+    "texts": {},             # 前端自定义文案 (键 -> 文本, 覆盖前端默认值)
+    "hidden_files": [],      # 管理员隐藏的文件/文件夹相对路径列表 (普通用户与未登录不可见)
+}
+
+SESSION_HOURS = 12          # 登录有效期 (小时)
+LOGIN_MAX_FAILS = 5         # 连续失败次数上限
+LOGIN_LOCK_SECONDS = 300    # 触发锁定后的等待秒数
+
+CONFIG = {}
+SESSIONS = {}               # token -> 过期时间戳
+LOGIN_FAILS = {}            # ip -> [失败次数, 最近失败时间]
+RESTART_REQUESTED = False
+CURRENT_SERVER = None
+
+INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+WINDOWS_DEVICE = re.compile(r"COM[1-9]|LPT[1-9]")
+
+
+LOG_SINKS = []  # 桌面管理端注册的日志回调
+
+
+def log(*args):
+    line = "[%s] %s" % (time.strftime("%H:%M:%S"), " ".join(str(a) for a in args))
+    try:
+        print(line, flush=True)   # 打包为无控制台窗口模式时 stdout 可能不存在
+    except Exception:
+        pass
+    for sink in LOG_SINKS:
+        try:
+            sink(line)
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------------------
+# 配置与密码
+# ----------------------------------------------------------------------------
+def sha256(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def hash_password(password, salt):
+    return sha256(salt + "@" + password)
+
+
+def load_config():
+    global CONFIG
+    CONFIG = dict(DEFAULTS)
+    raw = {}
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                raw = data
+                CONFIG.update(data)
+        except Exception as e:
+            log("读取 config.json 失败, 使用默认配置:", e)
+    # 账号: 新版使用 users 列表; 旧版单账号配置自动迁移
+    users = CONFIG.get("users")
+    if not (isinstance(users, list) and users):
+        salt = raw.get("salt") or secrets.token_hex(16)
+        has_hash = bool(raw.get("password_hash"))
+        CONFIG["users"] = [{
+            "username": str(raw.get("username") or "admin"),
+            "salt": salt,
+            "password_hash": raw.get("password_hash") or hash_password("admin123", salt),
+            "is_admin": True,
+        }]
+        save_config()
+        if not has_hash:
+            log("首次启动, 已生成初始账号: admin / admin123 (请尽快修改)")
+    # 规范化
+    try:
+        CONFIG["port"] = int(CONFIG["port"])
+    except (TypeError, ValueError):
+        CONFIG["port"] = DEFAULTS["port"]
+    try:
+        CONFIG["max_upload_mb"] = int(CONFIG["max_upload_mb"])
+    except (TypeError, ValueError):
+        CONFIG["max_upload_mb"] = DEFAULTS["max_upload_mb"]
+    if not isinstance(CONFIG.get("hidden_files"), list):
+        CONFIG["hidden_files"] = []
+    if not isinstance(CONFIG.get("texts"), dict):
+        CONFIG["texts"] = {}
+
+
+def save_config():
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(CONFIG, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, CONFIG_PATH)
+
+
+def update_settings(data):
+    """校验并应用服务器设置 (网页端与桌面端共用); 返回 (need_restart, err)"""
+    if not isinstance(data, dict):
+        return False, "请求格式错误"
+    need_restart = False
+
+    ip = str(data.get("ip", "")).strip()
+    if ip in ("", "auto"):
+        ip = ""
+    elif not is_valid_ip(ip):
+        return False, "IP 地址格式不正确"
+    if ip != CONFIG.get("ip", ""):
+        need_restart = True
+
+    try:
+        port = int(data.get("port", CONFIG["port"]))
+    except (TypeError, ValueError):
+        return False, "端口必须是数字"
+    if not (1 <= port <= 65535):
+        return False, "端口必须在 1-65535 之间"
+    if port != CONFIG["port"]:
+        need_restart = True
+
+    title = str(data.get("title", CONFIG["title"])).strip()[:50] or CONFIG["title"]
+
+    try:
+        max_mb = int(data.get("max_upload_mb", CONFIG["max_upload_mb"]))
+    except (TypeError, ValueError):
+        return False, "大小上限必须是数字"
+    if max_mb < 0:
+        return False, "大小上限不能为负数"
+
+    ud = str(data.get("upload_dir", CONFIG.get("upload_dir", "uploads"))).strip()
+    if not ud:
+        return False, "上传目录不能为空"
+    try:
+        os.makedirs(resolve_upload_dir(ud), exist_ok=True)
+    except OSError as e:
+        return False, "无法创建上传目录: %s" % e
+
+    texts = data.get("texts")
+    if texts is not None:
+        if not isinstance(texts, dict):
+            return False, "文案设置格式不正确"
+        cleaned = {}
+        for k, v in texts.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                return False, "文案设置格式不正确"
+            v = v.strip()
+            if len(k) > 64 or len(v) > 200:
+                return False, "文案内容过长 (每条不超过 200 字)"
+            cleaned[k] = v
+        merged = dict(CONFIG.get("texts", {}))
+        merged.update(cleaned)
+        CONFIG["texts"] = merged
+
+    CONFIG.update({"ip": ip, "port": port, "title": title,
+                   "max_upload_mb": max_mb, "upload_dir": ud})
+    save_config()
+    return need_restart, None
+
+
+def resolve_upload_dir(value):
+    """把配置中的上传目录解析为绝对路径 (支持绝对路径与相对路径)"""
+    d = str(value or "uploads").strip().strip('"')
+    if not d:
+        d = "uploads"
+    if os.path.isabs(d):
+        return os.path.normpath(d)
+    return os.path.join(BASE_DIR, d)
+
+
+def upload_dir():
+    full = resolve_upload_dir(CONFIG.get("upload_dir"))
+    try:
+        os.makedirs(full, exist_ok=True)
+    except OSError:
+        pass
+    return full
+
+
+# ----------------------------------------------------------------------------
+# 网络与安全工具
+# ----------------------------------------------------------------------------
+def get_local_ips():
+    """自动获取本机所有 IPv4 地址 (局域网与公网部署均适用)"""
+    ips = set()
+    # 方法1: UDP 探测默认路由对应的网卡 IP (最可靠, 不会真正发包)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(1)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        if not ip.startswith("127."):
+            ips.add(ip)
+        s.close()
+    except Exception:
+        pass
+    # 方法2: 主机名解析所有地址
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                ips.add(ip)
+    except Exception:
+        pass
+    return sorted(ips)
+
+
+def is_valid_ip(s):
+    parts = s.split(".")
+    if len(parts) != 4:
+        return False
+    for p in parts:
+        if not p.isdigit() or int(p) > 255:
+            return False
+    return True
+
+
+def safe_name(name):
+    """校验并清理文件名, 防止路径穿越与非法字符"""
+    if not name:
+        return None
+    name = name.replace("\\", "/").split("/")[-1]   # 只取最后一段
+    name = name.strip()
+    if not name or name in (".", ".."):
+        return None
+    if INVALID_CHARS.search(name):
+        return None
+    name = name.rstrip(" .")                        # Windows 不允许末尾是点或空格
+    if not name or len(name) > 180:
+        return None
+    stem = name.split(".")[0].upper()
+    if stem in ("CON", "PRN", "AUX", "NUL") or WINDOWS_DEVICE.fullmatch(stem):
+        return None
+    return name
+
+
+def valid_component(c):
+    """目录/文件名分量校验 (不含路径分隔符)"""
+    if not c or c in (".", ".."):
+        return False
+    if INVALID_CHARS.search(c):
+        return False
+    stem = c.split(".")[0].upper()
+    if stem in ("CON", "PRN", "AUX", "NUL") or WINDOWS_DEVICE.fullmatch(stem):
+        return False
+    return True
+
+
+def safe_relpath(p):
+    """把用户传入的相对路径规范化 (POSIX 风格); 含 .. 或非法分量时返回 None"""
+    p = str(p or "").replace("\\", "/").strip()
+    if not p:
+        return ""
+    parts = p.strip("/").split("/")
+    for c in parts:
+        if c == ".." or not valid_component(c):
+            return None
+    return "/".join(parts)
+
+
+def hidden_set():
+    hs = CONFIG.get("hidden_files")
+    return set(hs) if isinstance(hs, list) else set()
+
+
+def hidden_state(rel):
+    """返回 (是否隐藏, 命中的隐藏项) — 该项本身或其任意父目录被隐藏都算"""
+    hs = hidden_set()
+    cur = ""
+    for part in (rel or "").split("/"):
+        if not part:
+            continue
+        cur = cur + "/" + part if cur else part
+        if cur in hs:
+            return True, cur
+    return False, None
+
+
+def set_hidden(rel, hidden):
+    hs = hidden_set()
+    if hidden:
+        hs.add(rel)
+    else:
+        hs.discard(rel)
+    CONFIG["hidden_files"] = sorted(hs)
+    save_config()
+
+
+def migrate_hidden(old_rel, new_rel=None):
+    """重命名/删除后同步隐藏标记 (new_rel=None 表示删除)"""
+    hs = hidden_set()
+    changed = False
+    for h in list(hs):
+        if h == old_rel or h.startswith(old_rel + "/"):
+            changed = True
+            hs.discard(h)
+            if new_rel is not None:
+                hs.add(new_rel + h[len(old_rel):])
+    if changed:
+        CONFIG["hidden_files"] = sorted(hs)
+        save_config()
+
+
+def create_session(username):
+    token = secrets.token_hex(24)
+    SESSIONS[token] = [username, time.time() + SESSION_HOURS * 3600]
+    return token
+
+
+def get_token_cookie(handler):
+    """从请求 Cookie 中提取登录 token"""
+    try:
+        c = http.cookies.SimpleCookie()
+        c.load(handler.headers.get("Cookie") or "")
+        m = c.get("pan_token")
+        return m.value if m else None
+    except Exception:
+        return None
+
+
+def extract_token(handler):
+    """从请求头或 Cookie 中提取 token (不做有效性校验)"""
+    h = handler.headers.get("X-Auth-Token") or ""
+    auth = handler.headers.get("Authorization") or ""
+    if not h and auth.lower().startswith("bearer "):
+        h = auth[7:].strip()
+    if not h:
+        h = get_token_cookie(handler) or ""
+    h = h.strip()
+    return h or None
+
+
+def check_token(handler):
+    """已登录则返回用户名, 否则返回 None (支持请求头与 Cookie 两种方式)"""
+    h = extract_token(handler)
+    if not h:
+        return None
+    sess = SESSIONS.get(h)
+    if not sess:
+        return None
+    username, exp = sess
+    if exp < time.time():
+        SESSIONS.pop(h, None)
+        return None
+    return username
+
+
+def find_user(username):
+    for u in CONFIG.get("users", []):
+        if u.get("username") == username:
+            return u
+    return None
+
+
+def check_admin(handler):
+    """管理员则返回用户名, 否则返回 None"""
+    username = check_token(handler)
+    if not username:
+        return None
+    u = find_user(username)
+    if u and u.get("is_admin"):
+        return username
+    return None
+
+
+def count_admin():
+    return sum(1 for u in CONFIG.get("users", []) if u.get("is_admin"))
+
+
+def kill_sessions_of(username):
+    for t in [t for t, sess in SESSIONS.items() if sess and sess[0] == username]:
+        SESSIONS.pop(t, None)
+
+
+def client_ip(handler):
+    """客户端真实 IP: 支持反向代理透传的 X-Forwarded-For (用于登录限流)"""
+    xff = handler.headers.get("X-Forwarded-For") or ""
+    if xff:
+        return xff.split(",")[0].strip() or handler.client_address[0]
+    return handler.client_address[0]
+
+
+def login_allowed(ip):
+    entry = LOGIN_FAILS.get(ip)
+    if not entry:
+        return True, 0
+    count, first = entry
+    if count >= LOGIN_MAX_FAILS and time.time() - first < LOGIN_LOCK_SECONDS:
+        return False, int(LOGIN_LOCK_SECONDS - (time.time() - first))
+    if time.time() - first >= LOGIN_LOCK_SECONDS:
+        LOGIN_FAILS.pop(ip, None)
+    return True, 0
+
+
+# ----------------------------------------------------------------------------
+# HTTP 工具
+# ----------------------------------------------------------------------------
+def send_json(handler, data, status=200, close=False):
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    for hname, hval in getattr(handler, "_pending_headers", []):
+        handler.send_header(hname, hval)
+    handler._pending_headers = []
+    if close:
+        # 请求体未被读取时, 必须关闭连接, 否则残留字节会破坏 keep-alive 下一条请求
+        handler.close_connection = True
+        handler.send_header("Connection", "close")
+    handler.end_headers()
+    try:
+        handler.wfile.write(body)
+    except OSError:
+        pass
+
+
+def ok(handler, **kw):
+    send_json(handler, {"ok": True, **kw})
+
+
+def fail(handler, msg, status=400):
+    send_json(handler, {"ok": False, "msg": msg}, status, close=True)
+
+
+def read_json_body(handler, max_bytes=65536):
+    cl = handler.headers.get("Content-Length")
+    if cl is None:
+        return None
+    try:
+        length = int(cl)
+    except ValueError:
+        return None
+    if length <= 0 or length > max_bytes:
+        return None
+    raw = handler.rfile.read(length)
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+
+
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".json": "application/json; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+# 可在线预览的媒体文件类型 (视频/音频/图片)
+MEDIA_TYPES = {
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".ogv": "video/ogg",
+    ".mov": "video/quicktime",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac", ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4", ".aac": "audio/aac",
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif",
+    ".webp": "image/webp", ".bmp": "image/bmp", ".svg": "image/svg+xml", ".ico": "image/x-icon",
+}
+
+
+def request_restart():
+    global RESTART_REQUESTED
+    RESTART_REQUESTED = True
+    if CURRENT_SERVER is not None:
+        try:
+            CURRENT_SERVER.shutdown()
+        except Exception:
+            pass
+
+
+# ----------------------------------------------------------------------------
+# HTTP 请求处理
+# ----------------------------------------------------------------------------
+class PanHandler(BaseHTTPRequestHandler):
+    server_version = "PanServer/1.0"
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):
+        pass  # 使用自定义日志
+
+    def _resolve(self, rel):
+        """相对路径 -> 上传目录内的绝对路径; 越界或非法返回 None"""
+        base = os.path.abspath(upload_dir())
+        full = os.path.abspath(os.path.join(base, *rel.split("/"))) if rel else base
+        if full != base and not full.startswith(base + os.sep):
+            return None
+        return full
+
+    def handle_one_request(self):
+        # 客户端中途断开(如关闭浏览器、停止服务)是正常现象, 静默处理不打印堆栈
+        try:
+            super().handle_one_request()
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.timeout):
+            self.close_connection = True
+
+    def _log(self, status):
+        log("%s  %s %s  ->  %s" % (self.client_address[0], self.command, self.path, status))
+
+    # ------------------------- GET -------------------------
+    def do_GET(self):
+        try:
+            self._route_get()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        except Exception as e:
+            log("处理 GET 出错:", repr(e))
+            try:
+                fail(self, "服务器内部错误", 500)
+            except Exception:
+                pass
+
+    def _route_get(self):
+        parsed = urllib.parse.urlsplit(self.path)
+        path = urllib.parse.unquote(parsed.path)
+        if path in ("/", "/index.html"):
+            self._log(200)
+            self._serve_file(os.path.join(WEB_DIR, "index.html"))
+        elif path.startswith("/web/"):
+            self._serve_static(path[len("/web/"):])
+        elif path.startswith("/files/"):
+            self._download(path[len("/files/"):])
+        elif path.startswith("/preview/"):
+            self._preview(path[len("/preview/"):])
+        elif path == "/api/info":
+            self._api_info()
+        elif path == "/api/list":
+            self._api_list()
+        elif path == "/api/session":
+            self._api_session()
+        elif path == "/api/settings":
+            self._api_get_settings()
+        elif path == "/api/users":
+            self._api_list_users()
+        else:
+            self._log(404)
+            fail(self, "页面不存在", 404)
+
+    def _serve_static(self, rel):
+        name = safe_name(rel)
+        full = os.path.join(WEB_DIR, name) if name else None
+        abspath = os.path.abspath(full) if full else ""
+        if not full or not os.path.isfile(full) or not abspath.startswith(os.path.abspath(WEB_DIR) + os.sep):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        self._log(200)
+        self._serve_file(full)
+
+    def _serve_file(self, full, status=200):
+        try:
+            with open(full, "rb") as f:
+                data = f.read()
+        except OSError:
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        ext = os.path.splitext(full)[1].lower()
+        ctype = CONTENT_TYPES.get(ext, "application/octet-stream")
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        if ext == ".html":
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except OSError:
+            pass
+
+    def _api_info(self):
+        self._log(200)
+        ok(self,
+           title=CONFIG["title"],
+           port=CONFIG["port"],
+           addresses=get_local_ips(),
+           bound_ip=CONFIG.get("ip") or "0.0.0.0",
+           max_upload_mb=CONFIG["max_upload_mb"],
+           texts=CONFIG.get("texts", {}))
+
+    def _api_list(self):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        rel = safe_relpath((query.get("path") or [""])[0])
+        if rel is None:
+            self._log(400)
+            return fail(self, "路径不合法")
+        full = self._resolve(rel)
+        if not full or not os.path.isdir(full):
+            self._log(404)
+            return fail(self, "目录不存在", 404)
+        is_admin = bool(check_admin(self))
+        # 当前目录本身被隐藏时, 非管理员视为不存在
+        if rel and hidden_state(rel)[0] and not is_admin:
+            self._log(404)
+            return fail(self, "目录不存在", 404)
+        hs = hidden_set()
+        try:
+            names = os.listdir(full)
+        except OSError:
+            names = []
+        items = []
+        for n in names:
+            p = os.path.join(full, n)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            relpath = rel + "/" + n if rel else n
+            hid = relpath in hs
+            if hid and not is_admin:
+                continue
+            is_dir = os.path.isdir(p)
+            items.append({"name": n,
+                          "size": 0 if is_dir else st.st_size,
+                          "mtime": st.st_mtime,
+                          "is_dir": is_dir,
+                          "hidden": hid})
+        items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+        self._log(200)
+        ok(self, path=rel, files=items)
+
+    def _api_get_settings(self):
+        if not check_admin(self):
+            self._log(403)
+            return fail(self, "需要管理员权限", 403)
+        self._log(200)
+        ok(self,
+           ip=CONFIG.get("ip", ""),
+           port=CONFIG["port"],
+           title=CONFIG["title"],
+           max_upload_mb=CONFIG["max_upload_mb"],
+           upload_dir=CONFIG.get("upload_dir", "uploads"),
+           texts=CONFIG.get("texts", {}),
+           addresses=get_local_ips())
+
+    # ------------------------- 下载 / 预览 -------------------------
+    def _download(self, raw_name):
+        rel = safe_relpath(raw_name)
+        full = self._resolve(rel) if rel is not None else None
+        if not full or not os.path.isfile(full):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        if hidden_state(rel)[0] and not check_admin(self):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        name = rel.split("/")[-1]
+        size = os.path.getsize(full)
+        range_header = self.headers.get("Range")
+        if range_header:
+            self._download_range(full, name, size, range_header)
+        else:
+            self._send_file(full, name, size, 0, size, 200)
+
+    def _preview(self, raw_name):
+        """在线预览媒体文件 (视频/音频/图片), 免登录, 支持拖动进度"""
+        rel = safe_relpath(raw_name)
+        full = self._resolve(rel) if rel is not None else None
+        if not full or not os.path.isfile(full):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        if hidden_state(rel)[0] and not check_admin(self):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        name = rel.split("/")[-1]
+        ext = os.path.splitext(name)[1].lower()
+        ctype = MEDIA_TYPES.get(ext)
+        if not ctype:
+            self._log(415)
+            return fail(self, "该文件类型不支持在线预览", 415)
+        size = os.path.getsize(full)
+        range_header = self.headers.get("Range")
+        if range_header:
+            self._download_range(full, name, size, range_header, ctype, "inline")
+        else:
+            self._send_file(full, name, size, 0, size, 200, ctype, "inline")
+
+    def _send_file(self, full, name, size, start, length, status,
+                   content_type="application/octet-stream", disposition="attachment"):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Accept-Ranges", "bytes")
+        quoted = urllib.parse.quote(name, safe="")
+        ascii_fb = name.encode("ascii", "ignore").decode().replace('"', "") or "download"
+        if disposition == "inline":
+            self.send_header("Content-Disposition", "inline; filename*=UTF-8''%s" % quoted)
+        else:
+            self.send_header("Content-Disposition",
+                             'attachment; filename="%s"; filename*=UTF-8\'\'%s' % (ascii_fb, quoted))
+        if status == 206:
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, start + length - 1, size))
+        self.send_header("Content-Length", str(length))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        sent = 0
+        try:
+            with open(full, "rb") as f:
+                f.seek(start)
+                while sent < length:
+                    chunk = f.read(min(256 * 1024, length - sent))
+                    if not chunk:
+                        break
+                    try:
+                        self.wfile.write(chunk)
+                    except OSError:
+                        break
+                    sent += len(chunk)
+        except OSError:
+            pass
+        self._log(status)
+
+    def _download_range(self, full, name, size, header,
+                        content_type="application/octet-stream", disposition="attachment"):
+        m = re.match(r"bytes=(\d*)-(\d*)$", header.strip())
+        if not m:
+            return self._send_file(full, name, size, 0, size, 200, content_type, disposition)
+        a, b = m.group(1), m.group(2)
+        if a == "" and b == "":
+            return self._send_file(full, name, size, 0, size, 200, content_type, disposition)
+        if a == "":                      # 最后 b 字节
+            suffix = min(int(b), size)
+            if suffix <= 0:
+                return self._range_not_satisfiable(size)
+            return self._send_file(full, name, size, size - suffix, suffix, 206, content_type, disposition)
+        start = int(a)
+        if start >= size:
+            return self._range_not_satisfiable(size)
+        end = int(b) if b != "" else size - 1
+        end = min(end, size - 1)
+        if end < start:
+            return self._send_file(full, name, size, 0, size, 200, content_type, disposition)
+        return self._send_file(full, name, size, start, end - start + 1, 206, content_type, disposition)
+
+    def _range_not_satisfiable(self, size):
+        self.send_response(416)
+        self.send_header("Content-Range", "bytes */%d" % size)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        self._log(416)
+
+    # ------------------------- POST -------------------------
+    def do_POST(self):
+        try:
+            parsed = urllib.parse.urlsplit(self.path)
+            path = urllib.parse.unquote(parsed.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            if path == "/api/login":
+                self._api_login()
+            elif path == "/api/logout":
+                self._api_logout()
+            elif path == "/api/upload":
+                self._api_upload(query)
+            elif path == "/api/delete":
+                self._api_delete()
+            elif path == "/api/mkdir":
+                self._api_mkdir()
+            elif path == "/api/hide":
+                self._api_hide()
+            elif path == "/api/rename":
+                self._api_rename()
+            elif path == "/api/settings":
+                self._api_save_settings()
+            elif path == "/api/users":
+                self._api_add_user()
+            elif path == "/api/users/delete":
+                self._api_delete_user()
+            elif path == "/api/users/password":
+                self._api_reset_password()
+            elif path == "/api/users/admin":
+                self._api_set_admin()
+            else:
+                self._log(404)
+                fail(self, "接口不存在", 404)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        except Exception as e:
+            log("处理 POST 出错:", repr(e))
+            try:
+                fail(self, "服务器内部错误", 500)
+            except Exception:
+                pass
+
+    def _api_login(self):
+        ip = client_ip(self)
+        allowed, wait = login_allowed(ip)
+        if not allowed:
+            self._log(429)
+            return fail(self, "尝试次数过多, 请 %d 秒后再试" % wait, 429)
+        data = read_json_body(self)
+        if not isinstance(data, dict):
+            self._log(400)
+            return fail(self, "请求格式错误")
+        name = str(data.get("username", "")).strip()
+        pwd = str(data.get("password", ""))
+        u = find_user(name)
+        if u and secrets.compare_digest(hash_password(pwd, u["salt"]), u["password_hash"]):
+            LOGIN_FAILS.pop(ip, None)
+            token = create_session(name)
+            # 同时下发 Cookie, 使下载/预览等普通链接请求也自动携带登录态
+            self._pending_headers = getattr(self, "_pending_headers", []) + [
+                ("Set-Cookie",
+                 "pan_token=%s; Path=/; Max-Age=%d; SameSite=Lax; HttpOnly" % (token, SESSION_HOURS * 3600))]
+            self._log(200)
+            return ok(self, token=token, username=name, is_admin=bool(u.get("is_admin")))
+        entry = LOGIN_FAILS.get(ip, [0, time.time()])
+        entry[0] += 1
+        entry[1] = time.time()
+        LOGIN_FAILS[ip] = entry
+        self._log(401)
+        fail(self, "用户名或密码错误", 401)
+
+    def _api_logout(self):
+        h = extract_token(self) or ""
+        SESSIONS.pop(h, None)
+        # 清除登录 Cookie
+        self._pending_headers = getattr(self, "_pending_headers", []) + [
+            ("Set-Cookie", "pan_token=; Path=/; Max-Age=0")]
+        self._log(200)
+        ok(self)
+
+    def _api_session(self):
+        """会话校验: 前端页面加载时用于同步登录状态"""
+        token = extract_token(self)
+        username = check_token(self)
+        if not username:
+            self._log(200)
+            return ok(self, logged=False)
+        u = find_user(username)
+        self._log(200)
+        ok(self, logged=True, token=token, username=username,
+           is_admin=bool(u.get("is_admin")) if u else False)
+
+    def _api_upload(self, query):
+        if not check_token(self):
+            self._log(401)
+            return fail(self, "需要登录", 401)
+        name = safe_name((query.get("name") or [""])[0])
+        if not name:
+            self._log(400)
+            return fail(self, "文件名不合法")
+        rel = safe_relpath((query.get("path") or [""])[0])
+        if rel is None:
+            self._log(400)
+            return fail(self, "路径不合法")
+        if rel and hidden_state(rel)[0] and not check_admin(self):
+            self._log(404)
+            return fail(self, "目录不存在", 404)
+        target = self._resolve(rel)
+        if not target or not os.path.isdir(target):
+            self._log(404)
+            return fail(self, "目录不存在", 404)
+        cl = self.headers.get("Content-Length")
+        if cl is None:
+            self._log(411)
+            return fail(self, "缺少文件内容", 411)
+        try:
+            length = int(cl)
+        except ValueError:
+            self._log(411)
+            return fail(self, "缺少文件内容", 411)
+        if length < 0:
+            self._log(411)
+            return fail(self, "缺少文件内容", 411)
+        max_bytes = CONFIG["max_upload_mb"] * 1024 * 1024
+        if max_bytes > 0 and length > max_bytes:
+            self._log(413)
+            return fail(self, "文件超过大小上限 %d MB" % CONFIG["max_upload_mb"], 413)
+
+        up = upload_dir()
+        full = os.path.join(target, name)
+        if len(full) > 250:
+            self._log(400)
+            return fail(self, "文件名过长")
+        overwrite = (query.get("overwrite") or [""])[0] == "1"
+        if os.path.exists(full) and not overwrite:
+            self._log(409)
+            return send_json(self, {"ok": False, "exists": True, "msg": "同名文件已存在"}, 409, close=True)
+
+        written = 0
+        error = None
+        try:
+            with open(full, "wb") as f:
+                remaining = length
+                while remaining > 0:
+                    chunk = self.rfile.read(min(65536, remaining))
+                    if not chunk:
+                        raise IOError("客户端中断")
+                    f.write(chunk)
+                    written += len(chunk)
+                    remaining -= len(chunk)
+        except Exception as e:
+            error = str(e)
+        if written != length or error:
+            try:
+                os.remove(full)
+            except OSError:
+                pass
+            self._log(500)
+            return fail(self, "上传中断或失败", 500)
+        log("上传完成: %s (%d 字节) 来自 %s" % (name, written, self.client_address[0]))
+        self._log(200)
+        ok(self, name=name, size=written)
+
+    def _api_delete(self):
+        if not check_token(self):
+            self._log(401)
+            return fail(self, "需要登录", 401)
+        data = read_json_body(self)
+        if not isinstance(data, dict):
+            self._log(400)
+            return fail(self, "请求格式错误")
+        raw = str(data.get("path") or data.get("name") or "")
+        rel = safe_relpath(raw)
+        full = self._resolve(rel) if rel is not None else None
+        if not full or not os.path.lexists(full):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        is_dir = os.path.isdir(full)
+        if is_dir and not check_admin(self):
+            self._log(403)
+            return fail(self, "删除文件夹需要管理员权限", 403)
+        if hidden_state(rel)[0] and not check_admin(self):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        try:
+            if is_dir:
+                shutil.rmtree(full)
+            else:
+                os.remove(full)
+        except OSError as e:
+            self._log(500)
+            return fail(self, "删除失败: %s" % e, 500)
+        migrate_hidden(rel, None)
+        log("已删除: %s%s" % (rel, " (文件夹)" if is_dir else ""))
+        self._log(200)
+        ok(self)
+
+    def _api_mkdir(self):
+        if not check_token(self):
+            self._log(401)
+            return fail(self, "需要登录", 401)
+        data = read_json_body(self)
+        if not isinstance(data, dict):
+            self._log(400)
+            return fail(self, "请求格式错误")
+        raw = str(data.get("path") or "")
+        rel = safe_relpath(raw)
+        if not rel:
+            self._log(400)
+            return fail(self, "文件夹名不合法")
+        parent_rel = rel.rsplit("/", 1)[0] if "/" in rel else ""
+        if parent_rel and hidden_state(parent_rel)[0] and not check_admin(self):
+            self._log(404)
+            return fail(self, "目录不存在", 404)
+        full = self._resolve(rel)
+        if not full:
+            self._log(400)
+            return fail(self, "文件夹名不合法")
+        if os.path.exists(full):
+            self._log(409)
+            return fail(self, "同名文件或文件夹已存在", 409)
+        try:
+            os.makedirs(full)
+        except OSError as e:
+            self._log(500)
+            return fail(self, "创建失败: %s" % e, 500)
+        log("已创建文件夹: %s" % rel)
+        self._log(200)
+        ok(self, path=rel)
+
+    def _api_hide(self):
+        if not check_admin(self):
+            self._log(403)
+            return fail(self, "需要管理员权限", 403)
+        data = read_json_body(self)
+        if not isinstance(data, dict):
+            self._log(400)
+            return fail(self, "请求格式错误")
+        rel = safe_relpath(str(data.get("path", "")))
+        if not rel:
+            self._log(400)
+            return fail(self, "路径不合法")
+        full = self._resolve(rel)
+        if not full or not os.path.lexists(full):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        hidden = bool(data.get("hidden"))
+        set_hidden(rel, hidden)
+        log("已%s: %s" % ("隐藏" if hidden else "取消隐藏", rel))
+        self._log(200)
+        ok(self, path=rel, hidden=hidden)
+
+    def _api_rename(self):
+        if not check_admin(self):
+            self._log(403)
+            return fail(self, "需要管理员权限", 403)
+        data = read_json_body(self)
+        if not isinstance(data, dict):
+            self._log(400)
+            return fail(self, "请求格式错误")
+        raw = str(data.get("path") or data.get("old_name") or "")
+        rel = safe_relpath(raw)
+        if not rel:
+            self._log(400)
+            return fail(self, "路径不合法")
+        new_name = safe_name(str(data.get("new_name", "")))
+        if not new_name:
+            self._log(400)
+            return fail(self, "文件名不合法")
+        src = self._resolve(rel)
+        if not src or not os.path.lexists(src):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+        new_rel = parent + "/" + new_name if parent else new_name
+        if rel == new_rel:
+            self._log(200)
+            return ok(self)
+        dst = self._resolve(new_rel)
+        if os.path.lexists(dst):
+            self._log(409)
+            return fail(self, "目标文件名已存在", 409)
+        try:
+            os.rename(src, dst)
+        except OSError as e:
+            self._log(500)
+            return fail(self, "重命名失败: %s" % e, 500)
+        migrate_hidden(rel, new_rel)
+        log("已重命名: %s -> %s" % (rel, new_rel))
+        self._log(200)
+        ok(self, old_name=rel, new_name=new_rel)
+
+    def _api_save_settings(self):
+        if not check_admin(self):
+            self._log(403)
+            return fail(self, "需要管理员权限", 403)
+        data = read_json_body(self)
+        need_restart, err = update_settings(data)
+        if err:
+            self._log(400)
+            return fail(self, err)
+        log("设置已保存 (ip=%s, port=%d, title=%s)" % (CONFIG.get("ip") or "auto", CONFIG["port"], CONFIG["title"]))
+        if need_restart:
+            host = (self.headers.get("Host") or "").split(":")[0] or "127.0.0.1"
+            new_ip = CONFIG.get("ip") or host
+            self._log(200)
+            ok(self, restart=True, url="http://%s:%d/" % (new_ip, CONFIG["port"]))
+            threading.Timer(1.0, request_restart).start()
+        else:
+            self._log(200)
+            ok(self, restart=False)
+
+    # ------------------------- 账号管理 -------------------------
+    def _api_list_users(self):
+        if not check_admin(self):
+            self._log(403)
+            return fail(self, "需要管理员权限", 403)
+        self._log(200)
+        ok(self, users=[{"username": u["username"], "is_admin": bool(u.get("is_admin"))}
+                        for u in CONFIG.get("users", [])])
+
+    def _api_add_user(self):
+        if not check_admin(self):
+            self._log(403)
+            return fail(self, "需要管理员权限", 403)
+        data = read_json_body(self)
+        if not isinstance(data, dict):
+            self._log(400)
+            return fail(self, "请求格式错误")
+        username = str(data.get("username", "")).strip()
+        if not (1 <= len(username) <= 32) or any(ch.isspace() for ch in username):
+            self._log(400)
+            return fail(self, "用户名需为 1-32 个非空白字符")
+        if find_user(username):
+            self._log(409)
+            return fail(self, "账号已存在", 409)
+        password = str(data.get("password", ""))
+        if len(password) < 4:
+            self._log(400)
+            return fail(self, "密码至少 4 位")
+        salt = secrets.token_hex(16)
+        CONFIG["users"].append({
+            "username": username,
+            "salt": salt,
+            "password_hash": hash_password(password, salt),
+            "is_admin": bool(data.get("is_admin")),
+        })
+        save_config()
+        log("已添加账号: %s" % username)
+        self._log(200)
+        ok(self)
+
+    def _api_delete_user(self):
+        if not check_admin(self):
+            self._log(403)
+            return fail(self, "需要管理员权限", 403)
+        data = read_json_body(self)
+        if not isinstance(data, dict):
+            self._log(400)
+            return fail(self, "请求格式错误")
+        target = str(data.get("username", "")).strip()
+        if target == check_token(self):
+            self._log(400)
+            return fail(self, "不能删除当前登录的账号")
+        u = find_user(target)
+        if not u:
+            self._log(404)
+            return fail(self, "账号不存在", 404)
+        if u.get("is_admin") and count_admin() <= 1:
+            self._log(400)
+            return fail(self, "不能删除最后一个管理员")
+        CONFIG["users"].remove(u)
+        kill_sessions_of(target)
+        save_config()
+        log("已删除账号: %s" % target)
+        self._log(200)
+        ok(self)
+
+    def _api_reset_password(self):
+        me = check_token(self)
+        if not me:
+            self._log(401)
+            return fail(self, "需要登录", 401)
+        data = read_json_body(self)
+        if not isinstance(data, dict):
+            self._log(400)
+            return fail(self, "请求格式错误")
+        target = str(data.get("username", "")).strip()
+        password = str(data.get("password", ""))
+        if len(password) < 4:
+            self._log(400)
+            return fail(self, "密码至少 4 位")
+        if target != me and not check_admin(self):
+            self._log(403)
+            return fail(self, "只能修改自己的密码", 403)
+        u = find_user(target)
+        if not u:
+            self._log(404)
+            return fail(self, "账号不存在", 404)
+        u["salt"] = secrets.token_hex(16)
+        u["password_hash"] = hash_password(password, u["salt"])
+        save_config()
+        if target != me:
+            kill_sessions_of(target)   # 重置他人密码后, 注销其所有登录
+        log("已重置密码: %s" % target)
+        self._log(200)
+        ok(self)
+
+    def _api_set_admin(self):
+        if not check_admin(self):
+            self._log(403)
+            return fail(self, "需要管理员权限", 403)
+        data = read_json_body(self)
+        if not isinstance(data, dict):
+            self._log(400)
+            return fail(self, "请求格式错误")
+        target = str(data.get("username", "")).strip()
+        u = find_user(target)
+        if not u:
+            self._log(404)
+            return fail(self, "账号不存在", 404)
+        is_admin = bool(data.get("is_admin"))
+        if not is_admin and u.get("is_admin") and count_admin() <= 1:
+            self._log(400)
+            return fail(self, "不能取消最后一个管理员")
+        u["is_admin"] = is_admin
+        save_config()
+        log("已%s管理员权限: %s" % ("授予" if is_admin else "取消", target))
+        self._log(200)
+        ok(self)
+
+
+# ----------------------------------------------------------------------------
+# 服务启动
+# ----------------------------------------------------------------------------
+class PanServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def banner(bind_ip, port):
+    ips = get_local_ips()
+    log("=" * 52)
+    log("  %s 已启动" % CONFIG["title"])
+    log("  监听地址: %s:%d" % (bind_ip, port))
+    for ip in ips:
+        log("  访问地址:   http://%s:%d/" % (ip, port))
+    if not ips:
+        log("  本机访问:   http://127.0.0.1:%d/" % port)
+    log("  上传目录:   %s" % upload_dir())
+    log("-" * 52)
+    log("  下载免登录; 上传/删除需登录; 设置/账号管理需管理员")
+    log("  按 Ctrl+C 停止服务")
+    log("=" * 52)
+
+
+def try_add_firewall_rule():
+    """尽力添加 Windows 防火墙放行规则 (需要管理员权限, 失败则静默忽略)"""
+    if sys.platform != "win32":
+        return
+    try:
+        import subprocess
+        subprocess.run(
+            ["netsh", "advfirewall", "firewall", "add", "rule",
+             "name=PAN Tide cloud", "dir=in", "action=allow",
+             "program=%s" % sys.executable, "enable=yes", "profile=any"],
+            capture_output=True, timeout=15)
+    except Exception:
+        pass
+
+
+def stop_server():
+    """停止服务 (桌面管理端调用)"""
+    if CURRENT_SERVER is not None:
+        threading.Thread(target=CURRENT_SERVER.shutdown, daemon=True).start()
+
+
+def run_server(bind_ip, port, open_browser=True, on_event=None):
+    global CURRENT_SERVER, RESTART_REQUESTED
+    if on_event is None:
+        on_event = lambda kind, info=None: None
+
+    opened_browser = False
+    try:
+        while True:
+            RESTART_REQUESTED = False
+            try:
+                CURRENT_SERVER = PanServer((bind_ip, port), PanHandler)
+            except OSError as e:
+                msg = "无法绑定 %s:%d: %s" % (bind_ip, port, e)
+                log("启动失败: " + msg)
+                log("可能原因: 端口被占用, 或指定的 IP 不是本机地址")
+                log("可到「设置」中修改端口, 或删除 config.json 恢复默认")
+                on_event("error", msg)
+                if threading.current_thread() is threading.main_thread():
+                    try:
+                        input("按回车键退出...")   # 无控制台窗口(打包exe)时 stdin 可能不存在
+                    except Exception:
+                        pass
+                return
+            banner(bind_ip, port)
+            if bind_ip in ("", "0.0.0.0"):
+                try_add_firewall_rule()
+            if open_browser and not opened_browser:
+                # 默认打开 127.0.0.1: 本机访问不受防火墙影响
+                opened_browser = True
+                threading.Timer(1.2, lambda: webbrowser.open("http://127.0.0.1:%d/" % port)).start()
+            on_event("started", (bind_ip, port))
+            try:
+                CURRENT_SERVER.serve_forever(poll_interval=0.5)
+            except KeyboardInterrupt:
+                CURRENT_SERVER.server_close()
+                CURRENT_SERVER = None
+                log("")
+                log("已停止服务, 再见!")
+                return
+            CURRENT_SERVER.server_close()
+            CURRENT_SERVER = None
+            if not RESTART_REQUESTED:
+                on_event("stopped", None)
+                return
+            log("正在应用新配置并重启服务...")
+            time.sleep(0.5)  # 等待监听端口完全释放
+            bind_ip = CONFIG.get("ip") or "0.0.0.0"
+            port = CONFIG["port"]
+    except KeyboardInterrupt:
+        log("")
+        log("已停止服务, 再见!")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="网盘服务端 (支持局域网共享与公网部署)")
+    parser.add_argument("--ip", help="监听 IP (覆盖 config.json 中的设置)")
+    parser.add_argument("--port", type=int, help="监听端口 (覆盖 config.json 中的设置)")
+    parser.add_argument("--no-browser", action="store_true", help="启动时不自动打开浏览器")
+    args = parser.parse_args()
+
+    load_config()
+
+    bind_ip = args.ip if args.ip is not None else (CONFIG.get("ip") or "0.0.0.0")
+    port = args.port if args.port is not None else CONFIG["port"]
+
+    run_server(bind_ip, port, open_browser=not args.no_browser)
+
+
+if __name__ == "__main__":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    main()
