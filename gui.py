@@ -968,7 +968,7 @@ class PanGUI:
     # ------------------------------------------------------------------ 设置
     def load_settings_into_form(self):
         cfg = panserver.CONFIG
-        self.var_title.set(cfg.get("title", "网盘管理器"))
+        self.var_title.set(cfg.get("title", "小汐网盘"))
         self.var_ip.set(cfg.get("ip", ""))
         self.var_port.set(str(cfg.get("port", 8000)))
         self.var_max.set(str(cfg.get("max_upload_mb", 2048)))

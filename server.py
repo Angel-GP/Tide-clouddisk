@@ -54,7 +54,7 @@ CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 DEFAULTS = {
     "ip": "",                # 监听 IP, 空 = 0.0.0.0 (自动)
     "port": 8000,            # 监听端口
-    "title": "网盘管理器",    # 页面标题
+    "title": "小汐网盘",    # 页面标题
     "max_upload_mb": 2048,   # 单文件上传上限 (MB), 0 = 不限
     "upload_dir": "uploads", # 文件保存目录 (相对程序目录)
     "users": [],             # 账号列表: [{"username","salt","password_hash","is_admin"}]
@@ -1260,7 +1260,7 @@ def try_add_firewall_rule():
         import subprocess
         subprocess.run(
             ["netsh", "advfirewall", "firewall", "add", "rule",
-             "name=PAN 网盘管理器", "dir=in", "action=allow",
+             "name=PAN 小汐网盘", "dir=in", "action=allow",
              "program=%s" % sys.executable, "enable=yes", "profile=any"],
             capture_output=True, timeout=15)
     except Exception:

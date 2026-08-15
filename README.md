@@ -1,4 +1,4 @@
-# 📦 网盘管理器 (Pan Manager)
+# 📦 小汐网盘 (Pan Manager)
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6.svg)]()
