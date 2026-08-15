@@ -16,13 +16,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python (3.9, 与本地验证过的构建环境一致)
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.9'
 
-      - name: Install PyInstaller
-        run: python -m pip install --upgrade pyinstaller
+      - name: Install PyInstaller (锁定 6.22.0)
+        run: python -m pip install pyinstaller==6.22.0
 
       - name: Build exe
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name PanManager --icon app.ico --add-data "web;web" gui.py
@@ -43,13 +43,28 @@ jobs:
           - 自定义前端文案 / 列表与浏览双视图 / 悬停预览
           - 窗口图标内置, 无需附加文件
           - 由 GitHub Actions 自动构建
+
+          > 提示: 若 Windows 提示"已保护你的电脑", 请点击「更多信息」→「仍要运行」。
+          > 未签名程序被 SmartScreen 拦截属正常现象。
           "@ | Out-File -Encoding utf8 release_notes.md
 
-      - name: Create Release (tag 推送时)
+      - name: Create Release and upload (REST API, 保留中文文件名)
         if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" "dist\网盘管理器.exe" --title "Tide cloud 网盘管理器 ${{ github.ref_name }}" --notes-file release_notes.md
+        run: |
+          $notes = Get-Content release_notes.md -Raw -Encoding UTF8
+          $body = @{
+            tag_name = "${{ github.ref_name }}"
+            name = "Tide cloud 网盘管理器 ${{ github.ref_name }}"
+            body = $notes
+          } | ConvertTo-Json
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; "User-Agent" = "actions-build" }
+          $rel = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/Angel-GP/Tide-clouddisk/releases" -Headers $headers -ContentType "application/json; charset=utf-8" -Body $body
+          $name = [uri]::EscapeDataString("网盘管理器.exe")
+          $url = "https://uploads.github.com/repos/Angel-GP/Tide-clouddisk/releases/$($rel.id)/assets?name=$name"
+          Invoke-RestMethod -Method Post -Uri $url -Headers $headers -ContentType "application/octet-stream" -InFile "dist\网盘管理器.exe"
 
       - name: Upload artifact (手动运行时可下载)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
