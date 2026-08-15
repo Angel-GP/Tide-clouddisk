@@ -29,13 +29,13 @@ jobs:
 
       - name: Rename artifact
         shell: pwsh
-        run: Rename-Item -Path dist\PanManager.exe -NewName "网盘管理器.exe"
+        run: Rename-Item -Path dist\PanManager.exe -NewName "Tide cloud.exe"
 
       - name: Write release notes
         shell: pwsh
         run: |
           @"
-          Tide cloud 网盘管理器 Windows 单文件版(免 Python 环境)
+          Tide cloud Windows 单文件版(免 Python 环境)
 
           - 双击即用, 配置与上传文件保存在 exe 同目录
           - 支持局域网共享与公网服务器部署
@@ -48,7 +48,7 @@ jobs:
           > 未签名程序被 SmartScreen 拦截属正常现象。
           "@ | Out-File -Encoding utf8 release_notes.md
 
-      - name: Create Release and upload (REST API, 保留中文文件名)
+      - name: Create Release and upload (REST API)
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
@@ -57,18 +57,18 @@ jobs:
           $notes = Get-Content release_notes.md -Raw -Encoding UTF8
           $body = @{
             tag_name = "${{ github.ref_name }}"
-            name = "Tide cloud 网盘管理器 ${{ github.ref_name }}"
+            name = "Tide cloud ${{ github.ref_name }}"
             body = $notes
           } | ConvertTo-Json
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; "User-Agent" = "actions-build" }
           $rel = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/Angel-GP/Tide-clouddisk/releases" -Headers $headers -ContentType "application/json; charset=utf-8" -Body $body
-          $name = [uri]::EscapeDataString("网盘管理器.exe")
+          $name = [uri]::EscapeDataString("Tide cloud.exe")
           $url = "https://uploads.github.com/repos/Angel-GP/Tide-clouddisk/releases/$($rel.id)/assets?name=$name"
-          Invoke-RestMethod -Method Post -Uri $url -Headers $headers -ContentType "application/octet-stream" -InFile "dist\网盘管理器.exe"
+          Invoke-RestMethod -Method Post -Uri $url -Headers $headers -ContentType "application/octet-stream" -InFile "dist\Tide cloud.exe"
 
       - name: Upload artifact (手动运行时可下载)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
           name: tide-cloud-manager
-          path: dist\网盘管理器.exe
+          path: dist\Tide cloud.exe
