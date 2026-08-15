@@ -29,6 +29,11 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 
 import server as panserver
 
+try:
+    import icon_data   # 内嵌图标 (打包 exe 时随代码一起打包)
+except Exception:
+    icon_data = None
+
 
 def fmt_size(n):
     if n is None:
@@ -113,9 +118,16 @@ TEXT_GROUPS = [
 
 
 def _set_window_icon(win):
-    """给窗口/弹窗设置图标 (读取程序目录下的 app.ico, 不存在则忽略)"""
+    """给窗口/弹窗设置图标: 优先程序目录 app.ico, 其次内置图标 (写入临时文件)"""
     try:
         icon = os.path.join(panserver.APP_DIR, "app.ico")
+        if not os.path.exists(icon) and icon_data is not None:
+            import base64
+            import tempfile
+            icon = os.path.join(tempfile.gettempdir(), "tide_cloud_app.ico")
+            if not os.path.exists(icon):
+                with open(icon, "wb") as f:
+                    f.write(base64.b64decode(icon_data.ICON_B64))
         if os.path.exists(icon):
             win.iconbitmap(icon)
     except Exception:
