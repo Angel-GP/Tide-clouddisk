@@ -130,45 +130,58 @@ def _resolve_icon_path():
     return icon if os.path.exists(icon) else None
 
 
+def _win32_set_icon(win, icon):
+    """Win32 API 直接设置窗口大/小/类图标 (Tk 在窗口显示时会把羽毛写回, 需在显示后覆盖)"""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        hwnd = win.winfo_id()
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        LR_LOADFROMFILE = 0x10
+        IMAGE_ICON = 1
+        WM_SETICON = 0x80
+        ICON_BIG = 1
+        ICON_SMALL = 0
+        GCLP_HICON = -14
+        small_size = user32.GetSystemMetrics(49) or 16   # SM_CXSMICON
+        hicon_big = user32.LoadImageW(None, icon, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
+        hicon_small = user32.LoadImageW(None, icon, IMAGE_ICON, small_size, small_size, LR_LOADFROMFILE)
+        if hicon_big:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+            set_class = getattr(user32, "SetClassLongPtrW", None)
+            if set_class:
+                set_class(hwnd, GCLP_HICON, hicon_big)
+        if hicon_small:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+    except Exception:
+        pass
+
+
 def _set_window_icon(win):
-    """给窗口/弹窗设置图标: Tk iconbitmap + Win32 API 直接设置 (标题栏与任务栏全覆盖)"""
+    """给窗口/弹窗设置图标: Tk iconbitmap + Win32 API, 并在窗口显示后再次覆盖 (防 Tk 羽毛回写)"""
     try:
         icon = _resolve_icon_path()
         if not icon:
             return
         # Tk 自带方式 (标题栏)
-        win.iconbitmap(icon)
+        try:
+            win.iconbitmap(icon)
+        except Exception:
+            pass
         try:
             win.iconbitmap(default=icon)
         except Exception:
             pass
-        # Win32 直接设置: 大图标 + 小图标 + 窗口类图标 (任务栏不再回退羽毛)
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                win.update_idletasks()
-                hwnd = win.winfo_id()
-                if not hwnd:
-                    return
-                user32 = ctypes.windll.user32
-                LR_LOADFROMFILE = 0x10
-                IMAGE_ICON = 1
-                WM_SETICON = 0x80
-                ICON_BIG = 1
-                ICON_SMALL = 0
-                GCLP_HICON = -14
-                small_size = user32.GetSystemMetrics(49) or 16   # SM_CXSMICON
-                hicon_big = user32.LoadImageW(None, icon, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
-                hicon_small = user32.LoadImageW(None, icon, IMAGE_ICON, small_size, small_size, LR_LOADFROMFILE)
-                if hicon_big:
-                    user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
-                    set_class = getattr(user32, "SetClassLongPtrW", None)
-                    if set_class:
-                        set_class(hwnd, GCLP_HICON, hicon_big)
-                if hicon_small:
-                    user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
-            except Exception:
-                pass
+        # Win32 直接设置: 立即 + 显示后延时 + 每次 Map 事件时
+        _win32_set_icon(win, icon)
+        try:
+            win.after(200, _win32_set_icon, win, icon)
+            win.bind("<Map>", lambda e: _win32_set_icon(win, icon), add="+")
+        except Exception:
+            pass
     except Exception:
         pass
 

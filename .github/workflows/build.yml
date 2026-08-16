@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python (3.9, 与本地验证过的构建环境一致)
         uses: actions/setup-python@v5
@@ -34,14 +36,18 @@ jobs:
       - name: Write release notes
         shell: pwsh
         run: |
+          $changes = git log --no-merges --oneline -8 HEAD
           @"
           Tide cloud Windows 单文件版(免 Python 环境)
 
+          ## 本次更新 (修复/变更)
+          $($changes -join "`n")
+
+          ## 说明
           - 双击即用, 配置与上传文件保存在 exe 同目录
           - 支持局域网共享与公网服务器部署
           - 多账号权限 / 文件夹浏览 / 媒体在线预览 / 隐藏文件
           - 自定义前端文案 / 列表与浏览双视图 / 悬停预览
-          - 窗口图标内置, 无需附加文件
           - 由 GitHub Actions 自动构建
 
           > 提示: 若 Windows 提示"已保护你的电脑", 请点击「更多信息」→「仍要运行」。
