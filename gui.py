@@ -117,22 +117,56 @@ TEXT_GROUPS = [
 ]
 
 
+def _resolve_icon_path():
+    """解析图标文件路径: 优先程序目录 app.ico, 其次内置图标 (写入临时文件)"""
+    icon = os.path.join(panserver.APP_DIR, "app.ico")
+    if not os.path.exists(icon) and icon_data is not None:
+        import base64
+        import tempfile
+        icon = os.path.join(tempfile.gettempdir(), "tide_cloud_app.ico")
+        if not os.path.exists(icon):
+            with open(icon, "wb") as f:
+                f.write(base64.b64decode(icon_data.ICON_B64))
+    return icon if os.path.exists(icon) else None
+
+
 def _set_window_icon(win):
-    """给窗口/弹窗设置图标: 优先程序目录 app.ico, 其次内置图标 (写入临时文件)"""
+    """给窗口/弹窗设置图标: Tk iconbitmap + Win32 API 直接设置 (标题栏与任务栏全覆盖)"""
     try:
-        icon = os.path.join(panserver.APP_DIR, "app.ico")
-        if not os.path.exists(icon) and icon_data is not None:
-            import base64
-            import tempfile
-            icon = os.path.join(tempfile.gettempdir(), "tide_cloud_app.ico")
-            if not os.path.exists(icon):
-                with open(icon, "wb") as f:
-                    f.write(base64.b64decode(icon_data.ICON_B64))
-        if os.path.exists(icon):
-            win.iconbitmap(icon)
+        icon = _resolve_icon_path()
+        if not icon:
+            return
+        # Tk 自带方式 (标题栏)
+        win.iconbitmap(icon)
+        try:
+            win.iconbitmap(default=icon)
+        except Exception:
+            pass
+        # Win32 直接设置: 大图标 + 小图标 + 窗口类图标 (任务栏不再回退羽毛)
+        if sys.platform == "win32":
             try:
-                # 同时设置窗口类图标, 否则任务栏仍显示 Tk 默认羽毛
-                win.iconbitmap(default=icon)
+                import ctypes
+                win.update_idletasks()
+                hwnd = win.winfo_id()
+                if not hwnd:
+                    return
+                user32 = ctypes.windll.user32
+                LR_LOADFROMFILE = 0x10
+                IMAGE_ICON = 1
+                WM_SETICON = 0x80
+                ICON_BIG = 1
+                ICON_SMALL = 0
+                GCLP_HICON = -14
+                small_size = user32.GetSystemMetrics(49) or 16   # SM_CXSMICON
+                hicon_big = user32.LoadImageW(None, icon, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
+                hicon_small = user32.LoadImageW(None, icon, IMAGE_ICON, small_size, small_size, LR_LOADFROMFILE)
+                if hicon_big:
+                    user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+                    set_class = getattr(user32, "SetClassLongPtrW", None)
+                    if set_class:
+                        set_class(hwnd, GCLP_HICON, hicon_big)
+                if hicon_small:
+                    user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
             except Exception:
                 pass
     except Exception:
