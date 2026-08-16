@@ -184,6 +184,7 @@ tr.selected-row td{background:var(--line)}
       <span id="batchCount" class="muted">已选 0 项</span>
       <button id="btnBatchDownload" class="btn sm primary">下载所选</button>
       <button id="btnBatchDelete" class="btn sm danger">删除所选</button>
+      <button id="btnBatchHide" class="btn sm ghost">隐藏所选</button>
       <button id="btnBatchExit" class="btn sm ghost">退出选择</button>
     </div>
     <div class="crumb muted" id="crumb"></div>
@@ -307,9 +308,10 @@ tr.selected-row td{background:var(--line)}
     field_audit_log: '启用审计日志 (登录/上传/删除/重命名/隐藏/账号/设置变更)',
     field_debug_log: '启用debug日志 (调试信息更详细, 写入 logs\\日期_v版本.log)',
     btn_batch: '批量管理', btn_batch_exit: '退出选择',
-    batch_download: '下载所选', batch_delete: '删除所选', batch_selected: '已选 {n} 项',
+    batch_download: '下载所选', batch_delete: '删除所选', batch_hide: '隐藏所选', batch_selected: '已选 {n} 项',
     batch_confirm_delete: '确定删除选中的 {n} 项吗? 此操作不可恢复!',
     batch_delete_result: '批量删除完成: 成功 {n} 项, 失败 {m} 项',
+    batch_hide_result: '批量隐藏完成: 成功 {n} 项, 失败 {m} 项',
     hint_settings: 'IP 留空 = 自动监听所有网卡; 修改 IP/端口后服务器自动重启并跳转到新地址。仅管理员可修改设置。',
     btn_save_settings: '保存设置',
     login_title: '登录', login_username: '用户名', login_password: '密码', btn_cancel: '取消',
@@ -347,7 +349,7 @@ tr.selected-row td{background:var(--line)}
   var mediaModal=$('mediaModal'), mediaStage=$('mediaStage'), mediaName=$('mediaName');
   var zoomBadge=$('zoomBadge');
   var btnBatch=$('btnBatch'), batchBar=$('batchBar'), batchCount=$('batchCount');
-  var btnBatchDownload=$('btnBatchDownload'), btnBatchDelete=$('btnBatchDelete'), btnBatchExit=$('btnBatchExit');
+  var btnBatchDownload=$('btnBatchDownload'), btnBatchDelete=$('btnBatchDelete'), btnBatchHide=$('btnBatchHide'), btnBatchExit=$('btnBatchExit');
   var mediaPrev=$('mediaPrev'), mediaNext=$('mediaNext'), mediaClose=$('mediaClose');
   var hoverEl=$('hoverPreview');
   var toastEl=$('toast');
@@ -449,6 +451,7 @@ tr.selected-row td{background:var(--line)}
     setEl(btnBatchExit, 'btn_batch_exit');
     setEl(btnBatchDownload, 'batch_download');
     setEl(btnBatchDelete, 'batch_delete');
+    setEl(btnBatchHide, 'batch_hide');
     setEl($('badgePublic'), 'badge_public');
     setEl($('colName'), 'col_name');
     setEl($('colSize'), 'col_size');
@@ -747,8 +750,14 @@ tr.selected-row td{background:var(--line)}
     var n = Object.keys(selected).length;
     if (tHide('batch_selected')){ batchCount.classList.add('hidden'); }
     else { batchCount.classList.remove('hidden'); batchCount.textContent = t('batch_selected').split('{n}').join(n); }
+    var logged = !!token && sessionVerified;
+    var isAdmin = localStorage.getItem('pan_admin') === '1';
+    // 删除所选: 登录后可见; 隐藏所选: 管理员可见
+    btnBatchDelete.classList.toggle('hidden', !logged || tHide('batch_delete'));
+    btnBatchHide.classList.toggle('hidden', !isAdmin || tHide('batch_hide'));
     btnBatchDownload.disabled = n === 0;
     btnBatchDelete.disabled = n === 0;
+    btnBatchHide.disabled = n === 0;
   }
   function setBatchMode(on){
     batchMode = on;
@@ -797,6 +806,24 @@ tr.selected-row td{background:var(--line)}
     });
     chain.then(function(){
       toast(t('batch_delete_result').split('{n}').join(succ).split('{m}').join(failn), failn ? 'err' : 'ok');
+      setBatchMode(false);
+      refreshFiles();
+    });
+  }
+  function batchHide(){
+    var rels = Object.keys(selected);
+    if (!rels.length) return;
+    var succ = 0, failn = 0;
+    var chain = Promise.resolve();
+    rels.forEach(function(rel){
+      chain = chain.then(function(){
+        return api('/api/hide', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: rel, hidden: true})})
+          .then(function(){ succ++; })
+          .catch(function(){ failn++; });
+      });
+    });
+    chain.then(function(){
+      toast(t('batch_hide_result').split('{n}').join(succ).split('{m}').join(failn), failn ? 'err' : 'ok');
       setBatchMode(false);
       refreshFiles();
     });
@@ -950,6 +977,7 @@ tr.selected-row td{background:var(--line)}
     settingsNeedLogin.classList.toggle('hidden', logged || tHide('settings_need_login'));
     settingsNeedAdmin.classList.toggle('hidden', (logged && isAdmin) || tHide('settings_need_admin'));
     settingsForm.classList.toggle('hidden', !(logged && isAdmin));
+    updateBatchCount();   // 登录态/管理员态变化时同步批量按钮可见性
   }
   function openLogin(){
     loginModal.classList.remove('hidden');
@@ -1197,6 +1225,7 @@ tr.selected-row td{background:var(--line)}
   btnBatchExit.addEventListener('click', function(){ setBatchMode(false); });
   btnBatchDownload.addEventListener('click', batchDownload);
   btnBatchDelete.addEventListener('click', batchDelete);
+  btnBatchHide.addEventListener('click', batchHide);
   btnUpload.addEventListener('click', function(){
     if (!token){ openLogin(); toast(t('need_login_first'), 'err'); return; }
     fileInput.click();
