@@ -774,6 +774,10 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   function updateUserUI(){
     var logged = !!token && sessionVerified;
     var isAdmin = localStorage.getItem('pan_admin') === '1';
+    // 上传标签页: 仅登录后显示 (未登录不出现上传入口)
+    var uploadTab = document.querySelector('.tab[data-tab="upload"]');
+    if (uploadTab) uploadTab.classList.toggle('hidden', !logged || tHide('tab_upload'));
+    if (!logged && currentTab === 'upload') switchTab('files');
     btnLogin.classList.toggle('hidden', logged || tHide('login'));
     btnLogout.classList.toggle('hidden', !logged || tHide('logout'));
     userLabel.classList.toggle('hidden', !logged || tHide('logged_in_as'));
