@@ -34,6 +34,13 @@ try:
 except Exception:
     icon_data = None
 
+try:
+    import pystray
+    from PIL import Image as PILImage
+    import io as _io
+except Exception:
+    pystray = None
+
 
 def fmt_size(n):
     if n is None:
@@ -321,14 +328,18 @@ class PanGUI:
         self.current_path = ""
         self._current_dirs = set()
         self._hidden_names = set()
+        self.tray_icon = None
+        self._tray_notified = False
         self._build_ui()
         panserver.LOG_SINKS.append(lambda line: self.q.put(("log", line)))
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.bind("<Unmap>", self._on_unmap)
         self.root.after(100, self._poll)
         self.load_settings_into_form()
         self.texts_load()
         if not skip_login:
             self.root.after(1200, self._prompt_login_if_needed)
+            self.setup_tray()
         self.start_server()
 
     # ------------------------------------------------------------------ UI
@@ -632,6 +643,11 @@ class PanGUI:
         kind = ev[0]
         if kind == "log":
             self.append_log(ev[1])
+        elif kind == "tray":
+            try:
+                ev[1]()
+            except Exception:
+                pass
         elif kind == "srv":
             if ev[1] == "started":
                 self.client.sync_config()
@@ -1140,12 +1156,93 @@ class PanGUI:
         except Exception:
             self.toast("复制失败: " + addr)
 
-    def on_close(self):
+    # ------------------------------------------------------------------ 系统托盘
+    def setup_tray(self):
+        if pystray is None or icon_data is None:
+            return
+        try:
+            import base64
+            img = PILImage.open(_io.BytesIO(base64.b64decode(icon_data.ICON_PNG_B64)))
+            menu = pystray.Menu(
+                pystray.MenuItem("显示主界面", lambda: self._tray_run(self.tray_show), default=True),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("启动服务", lambda: self._tray_run(self.tray_start)),
+                pystray.MenuItem("停止服务", lambda: self._tray_run(self.tray_stop)),
+                pystray.MenuItem("打开网页", lambda: self._tray_run(self.tray_web)),
+                pystray.MenuItem("打开上传目录", lambda: self._tray_run(self.tray_dir)),
+                pystray.MenuItem("复制地址", lambda: self._tray_run(self.tray_copy)),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("退出", lambda: self._tray_run(self.tray_quit)),
+            )
+            self.tray_icon = pystray.Icon("tide_cloud", img, "Tide cloud", menu)
+            self.tray_icon.run_detached()
+            self.append_log("系统托盘已就绪: 最小化/关闭后窗口隐藏, 右键托盘图标可操作")
+        except Exception as e:
+            self.tray_icon = None
+            self.append_log("系统托盘初始化失败: %s" % e)
+
+    def _tray_run(self, fn):
+        self.q.put(("tray", fn))
+
+    def tray_show(self):
+        self.root.deiconify()
+        self.root.state("normal")
+        self.root.lift()
+        try:
+            self.root.focus_force()
+        except Exception:
+            pass
+
+    def tray_start(self):
+        self.start_server()
+
+    def tray_stop(self):
+        self.stop_server()
+
+    def tray_web(self):
+        self.open_web()
+
+    def tray_dir(self):
+        self.open_upload_dir()
+
+    def tray_copy(self):
+        self.copy_addr()
+
+    def tray_quit(self):
+        self.append_log("从托盘退出")
         try:
             panserver.stop_server()
         except Exception:
             pass
-        self.root.destroy()
+        try:
+            if self.tray_icon is not None:
+                self.tray_icon.stop()
+        except Exception:
+            pass
+        self.root.after(0, self.root.destroy)
+
+    def _on_unmap(self, _e):
+        try:
+            if self.root.state() == "iconic":
+                self.hide_to_tray()
+        except Exception:
+            pass
+
+    def hide_to_tray(self):
+        self.root.withdraw()
+        self._tray_notify_once()
+
+    def _tray_notify_once(self):
+        if self._tray_notified or self.tray_icon is None:
+            return
+        self._tray_notified = True
+        try:
+            self.tray_icon.notify("已最小化到系统托盘", "Tide cloud")
+        except Exception:
+            pass
+
+    def on_close(self):
+        self.hide_to_tray()
 
 
 def main():
