@@ -1381,12 +1381,47 @@ def stop_server():
         threading.Thread(target=CURRENT_SERVER.shutdown, daemon=True).start()
 
 
+def port_in_use(port, bind_ip):
+    """检测端口是否已被其他进程占用
+
+    Windows 上 SO_REUSEADDR 允许多个实例同时绑定同一端口 (导致关一个另一个仍在服务),
+    因此启动前需要主动探测: 任一候选地址能连通即视为已占用。
+    """
+    hosts = []
+    if bind_ip and bind_ip not in ("", "0.0.0.0"):
+        hosts.append(bind_ip)
+    hosts.append("127.0.0.1")
+    hosts.extend(get_local_ips())
+    for h in dict.fromkeys(hosts):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.8)
+            s.connect((h, port))
+            s.close()
+            return True
+        except Exception:
+            continue
+    return False
+
+
 def run_server(bind_ip, port, open_browser=True, on_event=None):
     global CURRENT_SERVER, RESTART_REQUESTED
     if on_event is None:
         on_event = lambda kind, info=None: None
 
     opened_browser = False
+    # 启动前检测端口占用, 避免多实例并存导致"停止后仍可访问"
+    if port_in_use(port, bind_ip):
+        msg = ("端口 %d 已被其他进程占用 (可能同时运行了多个程序实例)。\n"
+               "请先关闭其他实例 (任务管理器结束 python/Tide_cloud 进程) 再重新启动。" % port)
+        log("启动失败: " + msg.replace("\n", " "))
+        on_event("error", msg)
+        if threading.current_thread() is threading.main_thread():
+            try:
+                input("按回车键退出...")
+            except Exception:
+                pass
+        return
     try:
         while True:
             RESTART_REQUESTED = False
