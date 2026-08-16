@@ -136,6 +136,7 @@ def _win32_set_icon(win, icon):
         return
     try:
         import ctypes
+        win.update_idletasks()          # 关键: 先让窗口句柄生成 (否则 winfo_id 为 0, 设置全部无效)
         hwnd = win.winfo_id()
         if not hwnd:
             return
@@ -160,28 +161,42 @@ def _win32_set_icon(win, icon):
         pass
 
 
-def _set_window_icon(win):
-    """给窗口/弹窗设置图标: Tk iconbitmap + Win32 API, 并在窗口显示后再次覆盖 (防 Tk 羽毛回写)"""
+def _make_icon_photo(win):
+    """从内嵌 PNG 生成 Tk PhotoImage 图标 (绕开 Tk 对 ico 文件的解析问题)"""
+    if icon_data is None:
+        return None
     try:
+        import tkinter as tk
+        return tk.PhotoImage(master=win, data=icon_data.ICON_PNG_B64)
+    except Exception:
+        return None
+
+
+def _set_window_icon(win):
+    """给窗口/弹窗设置图标 (标题栏 + 任务栏)
+
+    主机制: 内嵌 PNG -> iconphoto (Tk 原生, 窗口显示时即生效, 无羽毛回退)
+    备份:   app.ico (若有) + Win32 API 显示后重新覆盖
+    """
+    try:
+        photo = _make_icon_photo(win)
+        if photo is not None:
+            win._icon_photo = photo            # 保持引用, 防止被 GC
+            win.iconphoto(True, photo)         # True = 作为默认图标用于本窗口及后续窗口
         icon = _resolve_icon_path()
-        if not icon:
-            return
-        # Tk 自带方式 (标题栏)
-        try:
-            win.iconbitmap(icon)
-        except Exception:
-            pass
-        try:
-            win.iconbitmap(default=icon)
-        except Exception:
-            pass
-        # Win32 直接设置: 立即 + 显示后延时 + 每次 Map 事件时
-        _win32_set_icon(win, icon)
-        try:
-            win.after(200, _win32_set_icon, win, icon)
-            win.bind("<Map>", lambda e: _win32_set_icon(win, icon), add="+")
-        except Exception:
-            pass
+        if icon:
+            try:
+                win.iconbitmap(icon)
+                win.iconbitmap(default=icon)
+            except Exception:
+                pass
+        if icon and sys.platform == "win32":
+            _win32_set_icon(win, icon)
+            try:
+                win.after(200, _win32_set_icon, win, icon)
+                win.bind("<Map>", lambda e: _win32_set_icon(win, icon), add="+")
+            except Exception:
+                pass
     except Exception:
         pass
 
