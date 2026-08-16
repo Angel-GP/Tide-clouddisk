@@ -260,8 +260,8 @@ tr.selected-row td{background:var(--line)}
 <div id="loginModal" class="modal hidden">
   <div class="modal-box">
     <h2 id="loginTitleH">登录</h2>
-    <input type="text" id="loginUser" placeholder="用户名">
-    <input type="password" id="loginPass" placeholder="密码">
+    <input type="text" id="loginUser" placeholder="用户名" autocomplete="username">
+    <input type="password" id="loginPass" placeholder="密码" autocomplete="current-password">
     <div class="row">
       <button id="btnCancelLogin" class="btn ghost">取消</button>
       <button id="btnDoLogin" class="btn primary">登录</button>
@@ -802,10 +802,16 @@ tr.selected-row td{background:var(--line)}
     });
   }
 
-  // ---------- 预览缩放 (视频/图片: 滚轮 / ↑↓ 键) ----------
-  function mediaZoomStep(delta){
+  // ---------- 预览缩放 (视频/图片: 滚轮 / ↑↓ 键; 滚轮以光标位置为缩放中心, 键盘以画面中心) ----------
+  function mediaZoomStep(delta, clientX, clientY){
     var v = mediaStage.querySelector('video') || mediaStage.querySelector('img');
     if (!v) return;
+    if (clientX != null){
+      var r = v.getBoundingClientRect();
+      v.style.transformOrigin = ((clientX - r.left) / r.width * 100) + '% ' + ((clientY - r.top) / r.height * 100) + '%';
+    } else {
+      v.style.transformOrigin = '50% 50%';
+    }
     mediaZoom = Math.min(3, Math.max(0.5, mediaZoom + delta));
     v.style.transform = 'scale(' + mediaZoom + ')';
     zoomBadge.textContent = Math.round(mediaZoom * 100) + '%';
@@ -948,7 +954,9 @@ tr.selected-row td{background:var(--line)}
   function openLogin(){
     loginModal.classList.remove('hidden');
     loginMsg.textContent = '';
-    loginUser.value = localStorage.getItem('pan_user') || '';
+    // 记住上次登录的用户名 (退出登录后仍保留; 无记录时不覆盖浏览器自动填充)
+    var u = localStorage.getItem('pan_lastuser') || localStorage.getItem('pan_user');
+    if (u) loginUser.value = u;
     setTimeout(function(){ (loginUser.value ? loginPass : loginUser).focus(); }, 50);
   }
   function closeLogin(){
@@ -968,6 +976,7 @@ tr.selected-row td{background:var(--line)}
           token = data.token;
           sessionVerified = true;
           localStorage.setItem('pan_user', data.username);
+          localStorage.setItem('pan_lastuser', data.username);
           localStorage.setItem('pan_admin', data.is_admin ? '1' : '');
           closeLogin();
           updateUserUI();
@@ -1140,6 +1149,7 @@ tr.selected-row td{background:var(--line)}
           token = d.token || token;   // 仅内存保存
           sessionVerified = true;
           localStorage.setItem('pan_user', d.username);
+          localStorage.setItem('pan_lastuser', d.username);
           localStorage.setItem('pan_admin', d.is_admin ? '1' : '');
         } else {
           token = '';
@@ -1231,7 +1241,7 @@ tr.selected-row td{background:var(--line)}
     if (mediaModal.classList.contains('hidden')) return;
     if (!mediaStage.querySelector('video') && !mediaStage.querySelector('img')) return;
     e.preventDefault();
-    mediaZoomStep(e.deltaY < 0 ? 0.1 : -0.1);
+    mediaZoomStep(e.deltaY < 0 ? 0.1 : -0.1, e.clientX, e.clientY);
   }, {capture: true, passive: false});
   document.addEventListener('keydown', function(e){
     if (mediaModal.classList.contains('hidden')) return;
