@@ -1292,7 +1292,7 @@ def _main():
     except Exception:
         pass
     panserver.load_config()
-    # 调试模式: --debug 或 debug 参数 -> 实时日志写入 debug\日期_v版本.log
+    # 调试模式: --debug 或 debug 参数 -> 实时日志写入 logs\日期_v版本.log
     if "--debug" in sys.argv or "debug" in sys.argv:
         panserver.setup_debug_log()
     # 审计日志 (默认开启, 可在设置中关闭)

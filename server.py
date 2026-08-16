@@ -37,7 +37,7 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
-APP_VERSION = "1.1.8"   # 程序版本号 (发版时与 Release 标签保持一致)
+APP_VERSION = "1.1.9"   # 程序版本号 (发版时与 Release 标签保持一致)
 
 # ----------------------------------------------------------------------------
 # 基础配置
@@ -226,10 +226,10 @@ def collect_sysinfo():
 
 
 def setup_debug_log():
-    """调试模式: 实时日志写入 debug\\日期_v版本.log, 文件头含程序版本与系统硬件信息"""
+    """调试模式: 实时日志写入 logs\\日期_v版本.log, 文件头含程序版本与系统硬件信息"""
     global DEBUG_LOG
     try:
-        debug_dir = os.path.join(APP_DIR, "debug")
+        debug_dir = os.path.join(APP_DIR, "logs")
         os.makedirs(debug_dir, exist_ok=True)
         fname = "%s_v%s.log" % (time.strftime("%Y%m%d"), APP_VERSION)
         fpath = os.path.join(debug_dir, fname)
@@ -1733,7 +1733,7 @@ def main():
 
     load_config()
 
-    # 调试模式: --debug 或 debug 参数 -> 实时日志写入 debug\日期_v版本.log
+    # 调试模式: --debug 或 debug 参数 -> 实时日志写入 logs\日期_v版本.log
     if "--debug" in sys.argv or "debug" in sys.argv:
         setup_debug_log()
     # 审计日志 (默认开启, 可在设置中关闭)

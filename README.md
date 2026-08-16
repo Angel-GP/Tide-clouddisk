@@ -112,7 +112,7 @@ caddy reverse-proxy --from your.domain.com --to 127.0.0.1:8080
 python server.py --ip 0.0.0.0       # 监听所有网卡(公网部署默认)
 python server.py --port 9000        # 指定端口
 python server.py --no-browser       # 启动时不自动打开浏览器
-python server.py --debug            # 调试模式: 实时日志写入 debug\日期_v版本.log (文件头含系统/硬件信息)
+python server.py --debug            # 调试模式: 实时日志写入 logs\日期_v版本.log (文件头含系统/硬件信息)
 python gui.py --headless            # 无窗口纯服务模式(服务器常用)
 python gui.py --selftest            # 桌面端无窗口自检
 ```
@@ -136,7 +136,7 @@ start.bat debug           # start.bat 参数透传
 
 效果:
 
-- 所有运行日志**实时写入** `debug\` 目录,文件名规范为 **日期 + 版本号**,如 `20260816_v1.0.9.log`
+- 所有运行日志**实时写入** `logs\` 目录,文件名规范为 **日期 + 版本号**,如 `20260816_v1.0.9.log`(审计日志为 `audit_日期.log`,同目录)
 - 日志文件头自动包含:程序版本、日志时间、操作系统、系统版本号、电脑型号、主板、CPU、内存、硬盘
 - 同一天重复启动续写到同一文件,跨天自动新建
 
