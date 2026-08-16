@@ -1,0 +1,27 @@
+name: cleanup-obsolete-releases
+on:
+  push:
+    tags:
+      - 'cleanup-*'
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete obsolete releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for t in v1.0.0 v1.0.1 v1.0.2 v1.0.3 v1.0.4 v1.0.5 v1.0.6 v1.0.7 v1.0.9 v1.1.0 v1.1.1 v1.1.2 v1.1.9 v1.2.2 v1.2.3; do
+            if gh release view "$t" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release delete "$t" --yes --repo "$GITHUB_REPOSITORY" && echo "deleted $t"
+            else
+              echo "no release for $t"
+            fi
+          done
+      - name: Remove trigger tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/${{ github.ref_name }}" || true
