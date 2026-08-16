@@ -130,6 +130,11 @@ def _set_window_icon(win):
                     f.write(base64.b64decode(icon_data.ICON_B64))
         if os.path.exists(icon):
             win.iconbitmap(icon)
+            try:
+                # 同时设置窗口类图标, 否则任务栏仍显示 Tk 默认羽毛
+                win.iconbitmap(default=icon)
+            except Exception:
+                pass
     except Exception:
         pass
 
