@@ -37,7 +37,7 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
-APP_VERSION = "1.1.9"   # 程序版本号 (发版时与 Release 标签保持一致)
+APP_VERSION = "1.2.0"   # 程序版本号 (发版时与 Release 标签保持一致)
 
 # ----------------------------------------------------------------------------
 # 基础配置
@@ -65,6 +65,7 @@ DEFAULTS = {
     "hidden_files": [],      # 管理员隐藏的文件/文件夹相对路径列表 (普通用户与未登录不可见)
     "trust_proxy": False,    # 是否信任反向代理透传的 X-Forwarded-For (默认不信任, 防伪造绕过登录限流)
     "audit_log": True,       # 是否启用审计日志 (登录/上传/删除/重命名/隐藏/账号/设置变更写入 logs\audit_日期.log)
+    "debug_log": False,      # 是否启用调试日志 (比普通日志更详细, 写入 logs\日期_v版本.log, 便于排查问题)
 }
 
 SESSION_HOURS = 12          # 登录有效期 (小时)
@@ -88,7 +89,8 @@ AUDIT_LOG = None  # 审计日志文件句柄 (安全事件记录)
 
 
 def log(*args):
-    line = "[%s] %s" % (time.strftime("%H:%M:%S"), " ".join(str(a) for a in args))
+    msg = " ".join(str(a) for a in args)
+    line = "[%s] %s" % (time.strftime("%H:%M:%S"), msg)
     try:
         print(line, flush=True)   # 打包为无控制台窗口模式时 stdout 可能不存在
     except Exception:
@@ -99,11 +101,23 @@ def log(*args):
         except Exception:
             pass
     if DEBUG_LOG is not None:
+        # 调试日志带完整日期时间, 比控制台普通日志更详细
         try:
-            DEBUG_LOG.write(line + "\n")
+            DEBUG_LOG.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
             DEBUG_LOG.flush()     # 实时落盘
         except Exception:
             pass
+
+
+def dbg(*args):
+    """调试日志专用: 仅写入调试日志文件 (普通日志不含这些细节, 不打扰控制台/管理端)"""
+    if DEBUG_LOG is None:
+        return
+    try:
+        DEBUG_LOG.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), " ".join(str(a) for a in args)))
+        DEBUG_LOG.flush()
+    except Exception:
+        pass
 
 
 def setup_audit_log():
@@ -153,6 +167,21 @@ def apply_audit_log(enabled):
             pass
         AUDIT_LOG = None
         log("审计日志已关闭")
+
+
+def apply_debug_log(enabled):
+    """运行时开启/关闭调试日志 (设置页开关立即生效)"""
+    global DEBUG_LOG
+    if enabled:
+        if DEBUG_LOG is None:
+            setup_debug_log()
+    elif DEBUG_LOG is not None:
+        try:
+            DEBUG_LOG.close()
+        except Exception:
+            pass
+        DEBUG_LOG = None
+        log("调试日志已关闭")
 
 
 def collect_sysinfo():
@@ -226,7 +255,7 @@ def collect_sysinfo():
 
 
 def setup_debug_log():
-    """调试模式: 实时日志写入 logs\\日期_v版本.log, 文件头含程序版本与系统硬件信息"""
+    """调试日志: 实时日志写入 logs\\日期_v版本.log, 文件头含程序版本与系统硬件信息"""
     global DEBUG_LOG
     try:
         debug_dir = os.path.join(APP_DIR, "logs")
@@ -310,6 +339,8 @@ def load_config():
         CONFIG["trust_proxy"] = False
     if not isinstance(CONFIG.get("audit_log"), bool):
         CONFIG["audit_log"] = True
+    if not isinstance(CONFIG.get("debug_log"), bool):
+        CONFIG["debug_log"] = False
 
 
 def save_config():
@@ -387,6 +418,13 @@ def update_settings(data):
     if al != CONFIG.get("audit_log", True):
         CONFIG["audit_log"] = al
         apply_audit_log(al)
+
+    dl = data.get("debug_log", CONFIG.get("debug_log", False))
+    if not isinstance(dl, bool):
+        return False, "debug_log 必须是布尔值"
+    if dl != CONFIG.get("debug_log", False):
+        CONFIG["debug_log"] = dl
+        apply_debug_log(dl)
 
     CONFIG.update({"ip": ip, "port": port, "title": title,
                    "max_upload_mb": max_mb, "upload_dir": ud})
@@ -813,6 +851,7 @@ class PanHandler(BaseHTTPRequestHandler):
         return full
 
     def handle_one_request(self):
+        self._req_start = time.time()
         # 客户端中途断开(如关闭浏览器、停止服务)是正常现象, 静默处理不打印堆栈
         try:
             super().handle_one_request()
@@ -821,6 +860,15 @@ class PanHandler(BaseHTTPRequestHandler):
 
     def _log(self, status):
         log("%s  %s %s  ->  %s" % (self.client_address[0], self.command, self.path, status))
+        # 调试日志: 记录每个请求的完整细节 (耗时/UA/登录用户), 便于排查问题
+        try:
+            elapsed = (time.time() - self._req_start) * 1000
+        except AttributeError:
+            elapsed = -1
+        user = check_token(self) or "-"
+        ua = (self.headers.get("User-Agent") or "-")[:120]
+        dbg("请求  %s  %s  ->  %s   耗时=%.0fms   用户=%s   UA=%s" % (
+            self.client_address[0], self.command, self.path, elapsed, user, ua))
 
     # ------------------------- GET -------------------------
     def do_GET(self):
@@ -961,6 +1009,7 @@ class PanHandler(BaseHTTPRequestHandler):
            upload_dir=CONFIG.get("upload_dir", "uploads"),
            trust_proxy=CONFIG.get("trust_proxy", False),
            audit_log=CONFIG.get("audit_log", True),
+           debug_log=CONFIG.get("debug_log", False),
            texts=CONFIG.get("texts", {}),
            addresses=get_local_ips())
 
@@ -1024,11 +1073,14 @@ class PanHandler(BaseHTTPRequestHandler):
             cache_path = os.path.join(cache_dir, key)
             src_mtime = os.path.getmtime(full)
             if not os.path.exists(cache_path) or os.path.getmtime(cache_path) < src_mtime:
+                dbg("缩略图生成: %s" % rel)
                 im = Image.open(full)
                 im.thumbnail((320, 320))
                 if im.mode not in ("RGB", "L"):
                     im = im.convert("RGB")
                 im.save(cache_path, "JPEG", quality=82)
+            else:
+                dbg("缩略图命中缓存: %s" % rel)
             self._log(200)
             return self._serve_file(cache_path)
         except Exception:
@@ -1038,6 +1090,8 @@ class PanHandler(BaseHTTPRequestHandler):
 
     def _send_file(self, full, name, size, start, length, status,
                    content_type="application/octet-stream", disposition="attachment"):
+        dbg("发送文件  %s  大小=%d  起点=%d 长度=%d  类型=%s  方式=%s" % (
+            name, size, start, length, content_type, disposition))
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Accept-Ranges", "bytes")
@@ -1438,10 +1492,10 @@ class PanHandler(BaseHTTPRequestHandler):
             self._log(400)
             return fail(self, err)
         log("设置已保存 (ip=%s, port=%d, title=%s)" % (CONFIG.get("ip") or "auto", CONFIG["port"], CONFIG["title"]))
-        audit("修改设置", "ip=%s port=%d title=%s upload_dir=%s trust_proxy=%s audit_log=%s 用户=%s 来源=%s" % (
+        audit("修改设置", "ip=%s port=%d title=%s upload_dir=%s trust_proxy=%s audit_log=%s debug_log=%s 用户=%s 来源=%s" % (
             CONFIG.get("ip") or "auto", CONFIG["port"], CONFIG["title"],
             CONFIG.get("upload_dir", "uploads"), CONFIG.get("trust_proxy", False), CONFIG.get("audit_log", True),
-            me, client_ip(self)))
+            CONFIG.get("debug_log", False), me, client_ip(self)))
         if need_restart:
             host = (self.headers.get("Host") or "").split(":")[0] or "127.0.0.1"
             new_ip = CONFIG.get("ip") or host
@@ -1733,9 +1787,8 @@ def main():
 
     load_config()
 
-    # 调试模式: --debug 或 debug 参数 -> 实时日志写入 logs\日期_v版本.log
-    if "--debug" in sys.argv or "debug" in sys.argv:
-        setup_debug_log()
+    # 调试日志 (默认关闭, 可在服务器设置中开启)
+    apply_debug_log(CONFIG.get("debug_log", False))
     # 审计日志 (默认开启, 可在设置中关闭)
     apply_audit_log(CONFIG.get("audit_log", True))
 

@@ -112,32 +112,19 @@ caddy reverse-proxy --from your.domain.com --to 127.0.0.1:8080
 python server.py --ip 0.0.0.0       # 监听所有网卡(公网部署默认)
 python server.py --port 9000        # 指定端口
 python server.py --no-browser       # 启动时不自动打开浏览器
-python server.py --debug            # 调试模式: 实时日志写入 logs\日期_v版本.log (文件头含系统/硬件信息)
 python gui.py --headless            # 无窗口纯服务模式(服务器常用)
 python gui.py --selftest            # 桌面端无窗口自检
 ```
 
-### 🐞 调试模式 (Debug)
+### 🐞 调试日志 (Debug Log)
 
-启动方式(任选其一):
-
-```bash
-# 1. 一键脚本 (推荐): 双击程序目录下的 start_debug.bat
-#    (自动优先使用 Tide_cloud.exe --debug, 没有 exe 则用 Python 源码)
-
-# 2. 命令行: 先 cd 到 exe 所在目录, 再运行
-"Tide_cloud.exe" --debug
-
-# 3. 源码方式
-python gui.py --debug     # 桌面管理端
-python server.py --debug  # 纯服务模式
-start.bat debug           # start.bat 参数透传
-```
+开启方式:打开**网盘管理器 → 服务器设置 → 勾选「启用debug日志」→ 保存设置**(网页设置页管理员同样可以勾选),立即生效,无需重启。
 
 效果:
 
-- 所有运行日志**实时写入** `logs\` 目录,文件名规范为 **日期 + 版本号**,如 `20260816_v1.0.9.log`(审计日志为 `audit_日期.log`,同目录)
+- 所有运行日志**实时写入** `logs\` 目录,文件名规范为 **日期 + 版本号**,如 `20260816_v1.2.0.log`(审计日志为 `audit_日期.log`,同目录)
 - 日志文件头自动包含:程序版本、日志时间、操作系统、系统版本号、电脑型号、主板、CPU、内存、硬盘
+- **比普通日志更详细**:每条带完整日期时间;额外记录每个请求的耗时、来源 IP、登录用户、浏览器 UA、文件发送范围、缩略图缓存命中等调试信息(仅写入日志文件,不刷屏控制台)
 - 同一天重复启动续写到同一文件,跨天自动新建
 
 ## 🗂 项目结构
@@ -150,7 +137,6 @@ pan/
 │  └─ index.html     网页前端(单文件, 内嵌 CSS/JS)
 ├─ start_gui.bat     桌面端一键启动(优先使用 exe)
 ├─ start.bat         纯服务模式一键启动
-├─ start_debug.bat   调试模式一键启动
 ├─ config.json       运行时自动生成(含账号密码哈希, 不入库)
 └─ uploads/          默认上传目录(不入库)
 ```

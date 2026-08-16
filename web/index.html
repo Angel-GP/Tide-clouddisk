@@ -228,6 +228,9 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       <label class="check"><span id="lbAuditLog">启用审计日志</span>
         <input type="checkbox" id="cfgAuditLog">
       </label>
+      <label class="check"><span id="lbDebugLog">启用debug日志</span>
+        <input type="checkbox" id="cfgDebugLog">
+      </label>
       <div class="hint" id="hintSettings">修改 IP 或端口后, 服务器会自动重启并跳转到新地址 (无需重新登录)。仅管理员可修改设置。</div>
       <button type="submit" class="btn primary" id="btnSaveSettings">保存设置</button>
     </form>
@@ -285,6 +288,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     field_port: '端口', field_max: '单文件大小上限 (MB, 0 = 不限)', field_upload_dir: '上传目录',
     field_trust_proxy: '信任反向代理 (X-Forwarded-For)',
     field_audit_log: '启用审计日志 (登录/上传/删除/重命名/隐藏/账号/设置变更)',
+    field_debug_log: '启用debug日志 (调试信息更详细, 写入 logs\\日期_v版本.log)',
     hint_settings: 'IP 留空 = 自动监听所有网卡; 修改 IP/端口后服务器自动重启并跳转到新地址。仅管理员可修改设置。',
     btn_save_settings: '保存设置',
     login_title: '登录', login_username: '用户名', login_password: '密码', btn_cancel: '取消',
@@ -316,7 +320,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   var uploadNeedLogin=$('uploadNeedLogin'), uploadArea=$('uploadArea'), dropzone=$('dropzone'), fileInput=$('fileInput');
   var progressWrap=$('progressWrap'), progressBar=$('progressBar'), progressText=$('progressText');
   var settingsNeedLogin=$('settingsNeedLogin'), settingsNeedAdmin=$('settingsNeedAdmin'), settingsForm=$('settingsForm');
-  var cfgTitle=$('cfgTitle'), cfgIp=$('cfgIp'), ipList=$('ipList'), cfgPort=$('cfgPort'), cfgMax=$('cfgMax'), cfgUploadDir=$('cfgUploadDir'), cfgTrustProxy=$('cfgTrustProxy'), cfgAuditLog=$('cfgAuditLog');
+  var cfgTitle=$('cfgTitle'), cfgIp=$('cfgIp'), ipList=$('ipList'), cfgPort=$('cfgPort'), cfgMax=$('cfgMax'), cfgUploadDir=$('cfgUploadDir'), cfgTrustProxy=$('cfgTrustProxy'), cfgAuditLog=$('cfgAuditLog'), cfgDebugLog=$('cfgDebugLog');
   var loginModal=$('loginModal'), loginUser=$('loginUser'), loginPass=$('loginPass'), loginMsg=$('loginMsg');
   var btnDoLogin=$('btnDoLogin'), btnCancelLogin=$('btnCancelLogin');
   var mediaModal=$('mediaModal'), mediaStage=$('mediaStage'), mediaName=$('mediaName');
@@ -437,6 +441,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     setEl($('lbUploadDir'), 'field_upload_dir');
     setEl($('lbTrustProxy'), 'field_trust_proxy');
     setEl($('lbAuditLog'), 'field_audit_log');
+    setEl($('lbDebugLog'), 'field_debug_log');
     setEl($('hintSettings'), 'hint_settings');
     setEl($('btnSaveSettings'), 'btn_save_settings');
     setEl($('loginTitleH'), 'login_title');
@@ -930,6 +935,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       cfgUploadDir.value = d.upload_dir || 'uploads';
       cfgTrustProxy.checked = !!d.trust_proxy;
       cfgAuditLog.checked = d.audit_log !== false;
+      cfgDebugLog.checked = !!d.debug_log;
       ipList.innerHTML = '';
       var opts = [''].concat(d.addresses || []);
       opts.forEach(function(ip){
@@ -948,7 +954,8 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       max_upload_mb: parseInt(cfgMax.value, 10) || 0,
       upload_dir: cfgUploadDir.value.trim() || 'uploads',
       trust_proxy: !!cfgTrustProxy.checked,
-      audit_log: !!cfgAuditLog.checked
+      audit_log: !!cfgAuditLog.checked,
+      debug_log: !!cfgDebugLog.checked
     };
     if (!body.port || body.port < 1 || body.port > 65535){ toast(t('port_invalid'), 'err'); return; }
     api('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
