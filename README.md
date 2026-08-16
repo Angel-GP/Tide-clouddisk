@@ -32,7 +32,7 @@
 
 ### 方式一:直接运行 exe(推荐,无需 Python)
 
-到 [Releases](https://github.com/Angel-GP/Tide-clouddisk/releases) 下载最新的 `网盘管理器.exe`(由 GitHub Actions 自动构建),双击运行即可。配置与上传文件保存在 exe 所在目录旁,整个文件夹可随意拷贝到其他 Windows 电脑/服务器使用。
+到 [Releases](https://github.com/Angel-GP/Tide-clouddisk/releases) 下载最新的 `Tide cloud.exe`(由 GitHub Actions 自动构建),双击运行即可。配置与上传文件保存在 exe 所在目录旁,整个文件夹可随意拷贝到其他 Windows 电脑/服务器使用。
 
 ### 方式二:源码运行(需要 Python 3.8+)
 
@@ -60,8 +60,8 @@
 
 1. 把整个程序文件夹上传到 Windows 服务器(云主机/VPS/家中公网电脑均可)
 2. 启动服务,二选一:
-   - 双击 `网盘管理器.exe`(图形界面)
-   - 无窗口纯服务:`网盘管理器.exe --headless`,或 `python gui.py --headless`,或 `python server.py`
+   - 双击 `Tide cloud.exe`(图形界面)
+   - 无窗口纯服务:`Tide cloud.exe --headless`,或 `python gui.py --headless`,或 `python server.py`
 3. 放行端口:
    - 程序会尝试自动添加 Windows 防火墙规则(需管理员权限)
    - **云服务器还需在控制台"安全组/防火墙"放行对应端口**
@@ -117,6 +117,29 @@ python gui.py --headless            # 无窗口纯服务模式(服务器常用)
 python gui.py --selftest            # 桌面端无窗口自检
 ```
 
+### 🐞 调试模式 (Debug)
+
+启动方式(任选其一):
+
+```bash
+# 1. 一键脚本 (推荐): 双击程序目录下的 start_debug.bat
+#    (自动优先使用 Tide cloud.exe --debug, 没有 exe 则用 Python 源码)
+
+# 2. 命令行: 先 cd 到 exe 所在目录, 再运行
+"Tide cloud.exe" --debug
+
+# 3. 源码方式
+python gui.py --debug     # 桌面管理端
+python server.py --debug  # 纯服务模式
+start.bat debug           # start.bat 参数透传
+```
+
+效果:
+
+- 所有运行日志**实时写入** `debug\` 目录,文件名规范为 **日期 + 版本号**,如 `20260816_v1.0.9.log`
+- 日志文件头自动包含:程序版本、日志时间、操作系统、系统版本号、电脑型号、主板、CPU、内存、硬盘
+- 同一天重复启动续写到同一文件,跨天自动新建
+
 ## 🗂 项目结构
 
 ```
@@ -127,6 +150,7 @@ pan/
 │  └─ index.html     网页前端(单文件, 内嵌 CSS/JS)
 ├─ start_gui.bat     桌面端一键启动(优先使用 exe)
 ├─ start.bat         纯服务模式一键启动
+├─ start_debug.bat   调试模式一键启动
 ├─ config.json       运行时自动生成(含账号密码哈希, 不入库)
 └─ uploads/          默认上传目录(不入库)
 ```
