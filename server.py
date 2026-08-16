@@ -37,7 +37,7 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
-APP_VERSION = "1.2.0"   # 程序版本号 (发版时与 Release 标签保持一致)
+APP_VERSION = "1.2.1"   # 程序版本号 (发版时与 Release 标签保持一致)
 
 # ----------------------------------------------------------------------------
 # 基础配置
@@ -814,11 +814,15 @@ CONTENT_TYPES = {
 # 注意: 不含 .svg —— SVG 可携带脚本, 按附件下载处理, 绝不内联返回
 MEDIA_TYPES = {
     ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".ogv": "video/ogg",
-    ".mov": "video/quicktime",
+    ".mov": "video/quicktime", ".avi": "video/x-msvideo", ".mkv": "video/x-matroska",
+    ".flv": "video/x-flv", ".ts": "video/mp2t", ".3gp": "video/3gpp",
+    ".mpg": "video/mpeg", ".mpeg": "video/mpeg", ".wmv": "video/x-ms-wmv",
     ".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac", ".ogg": "audio/ogg",
-    ".m4a": "audio/mp4", ".aac": "audio/aac",
-    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif",
-    ".webp": "image/webp", ".bmp": "image/bmp", ".ico": "image/x-icon",
+    ".m4a": "audio/mp4", ".aac": "audio/aac", ".opus": "audio/ogg",
+    ".wma": "audio/x-ms-wma", ".aif": "audio/aiff", ".aiff": "audio/aiff",
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".jfif": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp", ".ico": "image/x-icon",
+    ".avif": "image/avif", ".tif": "image/tiff", ".tiff": "image/tiff",
 }
 
 
@@ -910,6 +914,8 @@ class PanHandler(BaseHTTPRequestHandler):
             self._api_get_settings()
         elif path == "/api/users":
             self._api_list_users()
+        elif path == "/api/zip":
+            self._api_zip()
         else:
             self._log(404)
             fail(self, "页面不存在", 404)
@@ -1012,6 +1018,64 @@ class PanHandler(BaseHTTPRequestHandler):
            debug_log=CONFIG.get("debug_log", False),
            texts=CONFIG.get("texts", {}),
            addresses=get_local_ips())
+
+    # ------------------------- 批量打包下载 -------------------------
+    def _api_zip(self):
+        """批量下载: 把所选文件/文件夹打包为 zip 返回 (下载免登录; 隐藏项仅管理员可见)"""
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        raws = query.get("p") or query.get("paths") or []
+        rels = []
+        for r in raws:
+            rel = safe_relpath(r)
+            if rel and rel not in rels:
+                rels.append(rel)
+        if not rels:
+            self._log(400)
+            return fail(self, "未选择要下载的文件", 400)
+        is_admin = bool(check_admin(self))
+        base = os.path.abspath(upload_dir())
+        entries = []  # (zip 内相对路径, 磁盘绝对路径)
+        for rel in rels:
+            full = self._resolve(rel)
+            if not full or not os.path.lexists(full):
+                continue
+            if hidden_state(rel)[0] and not is_admin:
+                continue
+            if os.path.isdir(full):
+                for root, dirs, files in os.walk(full):
+                    dirs[:] = [d for d in dirs if is_admin or
+                               not hidden_state(os.path.relpath(os.path.join(root, d), base).replace(os.sep, "/"))[0]]
+                    for fn in files:
+                        p = os.path.join(root, fn)
+                        child_rel = os.path.relpath(p, base).replace(os.sep, "/")
+                        if hidden_state(child_rel)[0] and not is_admin:
+                            continue
+                        entries.append((child_rel, p))
+            else:
+                entries.append((rel, full))
+        if not entries:
+            self._log(404)
+            return fail(self, "文件不存在或不可下载", 404)
+        import tempfile
+        import zipfile
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp.close()
+        try:
+            with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_STORED) as zf:
+                for arc, full in entries:
+                    try:
+                        zf.write(full, arc)
+                    except OSError:
+                        continue
+            size = os.path.getsize(tmp.name)
+            name = "Tide_cloud_%s.zip" % time.strftime("%Y%m%d_%H%M%S")
+            dbg("批量打包下载: %d 个文件 -> %s (%d 字节)" % (len(entries), name, size))
+            self._send_file(tmp.name, name, size, 0, size, 200, "application/zip")
+        finally:
+            try:
+                os.remove(tmp.name)
+            except OSError:
+                pass
 
     # ------------------------- 下载 / 预览 -------------------------
     def _download(self, raw_name):

@@ -136,6 +136,15 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   .media-nav.prev{left:4px;top:auto;bottom:10px;transform:none}
   .media-nav.next{right:4px;top:auto;bottom:10px;transform:none}
 }
+/* 批量管理 */
+.batch-bar{display:flex;align-items:center;gap:10px;padding:2px 0 10px;flex-wrap:wrap}
+.batch-bar .btn{margin:0}
+.batch-cb{width:16px;height:16px;cursor:pointer;vertical-align:middle}
+tr.selected-row td{background:var(--line)}
+.tile{position:relative}
+.tile .batch-cb{position:absolute;top:6px;left:6px;width:18px;height:18px;z-index:3}
+.tile.selected{outline:2px solid #3b82f6;outline-offset:-2px}
+#zoomBadge{display:inline-block;margin-top:8px;background:rgba(0,0,0,.55);color:#fff;padding:3px 12px;border-radius:12px;font-size:12px}
 /* 自定义文案编辑器 */
 </style>
 </head>
@@ -163,12 +172,19 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       <button id="btnRefresh" class="btn ghost">🔄 刷新</button>
       <button id="btnUp" class="btn ghost hidden">⬆ 返回上级</button>
       <button id="btnMkdir" class="btn ghost hidden">➕ 新建文件夹</button>
+      <button id="btnBatch" class="btn ghost">批量管理</button>
       <span class="badge" id="badgePublic">下载免登录 · 上传需登录</span>
       <span class="viewswitch">
         <button id="btnViewList" class="btn sm">📋 列表</button>
         <button id="btnViewBrowse" class="btn sm">🔲 浏览</button>
       </span>
       <span id="fileCount" class="muted"></span>
+    </div>
+    <div id="batchBar" class="batch-bar hidden">
+      <span id="batchCount" class="muted">已选 0 项</span>
+      <button id="btnBatchDownload" class="btn sm primary">下载所选</button>
+      <button id="btnBatchDelete" class="btn sm danger">删除所选</button>
+      <button id="btnBatchExit" class="btn sm ghost">退出选择</button>
     </div>
     <div class="crumb muted" id="crumb"></div>
     <div class="files-wrap" id="filesWrap">
@@ -259,6 +275,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     <button id="mediaClose" class="media-nav close" title="关闭">✕</button>
     <button id="mediaPrev" class="media-nav prev" title="上一个">‹</button>
     <div id="mediaStage"></div>
+    <div id="zoomBadge" class="hidden">100%</div>
     <button id="mediaNext" class="media-nav next" title="下一个">›</button>
     <div id="mediaName"></div>
   </div>
@@ -289,6 +306,10 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     field_trust_proxy: '信任反向代理 (X-Forwarded-For)',
     field_audit_log: '启用审计日志 (登录/上传/删除/重命名/隐藏/账号/设置变更)',
     field_debug_log: '启用debug日志 (调试信息更详细, 写入 logs\\日期_v版本.log)',
+    btn_batch: '批量管理', btn_batch_exit: '退出选择',
+    batch_download: '下载所选', batch_delete: '删除所选', batch_selected: '已选 {n} 项',
+    batch_confirm_delete: '确定删除选中的 {n} 项吗? 此操作不可恢复!',
+    batch_delete_result: '批量删除完成: 成功 {n} 项, 失败 {m} 项',
     hint_settings: 'IP 留空 = 自动监听所有网卡; 修改 IP/端口后服务器自动重启并跳转到新地址。仅管理员可修改设置。',
     btn_save_settings: '保存设置',
     login_title: '登录', login_username: '用户名', login_password: '密码', btn_cancel: '取消',
@@ -324,6 +345,9 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   var loginModal=$('loginModal'), loginUser=$('loginUser'), loginPass=$('loginPass'), loginMsg=$('loginMsg');
   var btnDoLogin=$('btnDoLogin'), btnCancelLogin=$('btnCancelLogin');
   var mediaModal=$('mediaModal'), mediaStage=$('mediaStage'), mediaName=$('mediaName');
+  var zoomBadge=$('zoomBadge');
+  var btnBatch=$('btnBatch'), batchBar=$('batchBar'), batchCount=$('batchCount');
+  var btnBatchDownload=$('btnBatchDownload'), btnBatchDelete=$('btnBatchDelete'), btnBatchExit=$('btnBatchExit');
   var mediaPrev=$('mediaPrev'), mediaNext=$('mediaNext'), mediaClose=$('mediaClose');
   var hoverEl=$('hoverPreview');
   var toastEl=$('toast');
@@ -336,6 +360,9 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   var currentFiles = [];
   var mediaFiles = [];
   var mediaIndex = -1;
+  var mediaZoom = 1;
+  var batchMode = false;      // 批量管理选择模式
+  var selected = {};          // 已选相对路径 -> true
   var viewMode = localStorage.getItem('pan_view') === 'browse' ? 'browse' : 'list';
 
   // ---------- 工具 ----------
@@ -418,6 +445,10 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     setEl(btnMkdir, 'btn_mkdir');
     setEl(btnViewList, 'btn_view_list');
     setEl(btnViewBrowse, 'btn_view_browse');
+    setEl(btnBatch, 'btn_batch');
+    setEl(btnBatchExit, 'btn_batch_exit');
+    setEl(btnBatchDownload, 'batch_download');
+    setEl(btnBatchDelete, 'batch_delete');
     setEl($('badgePublic'), 'badge_public');
     setEl($('colName'), 'col_name');
     setEl($('colSize'), 'col_size');
@@ -462,6 +493,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     return 'files/' + relOf(name).split('/').map(encodeURIComponent).join('/');
   }
   function refreshFiles(){
+    if (batchMode){ selected = {}; updateBatchCount(); }
     api('/api/list?path=' + encodeURIComponent(currentPath))
       .then(function(d){ renderFiles(d.files || []); })
       .catch(function(){});
@@ -499,11 +531,11 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     refreshFiles();
   }
   function isMedia(name){
-    return /\.(mp4|m4v|webm|ogv|mov|mp3|wav|flac|ogg|m4a|aac|jpe?g|png|gif|webp|bmp|svg|ico)$/i.test(name);
+    return /\.(mp4|m4v|webm|ogv|mov|avi|mkv|flv|ts|3gp|mpg|mpeg|wmv|mp3|wav|flac|ogg|m4a|aac|opus|wma|aif|aiff|jpe?g|jfif|png|gif|webp|bmp|ico|avif)$/i.test(name);
   }
-  function isImage(n){ return /\.(jpe?g|png|gif|webp|bmp|ico)$/i.test(n); }   // 不含 svg (防 XSS, svg 按附件下载)
-  function isVideo(n){ return /\.(mp4|m4v|webm|ogv|mov)$/i.test(n); }
-  function isAudio(n){ return /\.(mp3|wav|flac|ogg|m4a|aac)$/i.test(n); }
+  function isImage(n){ return /\.(jpe?g|jfif|png|gif|webp|bmp|ico|avif|tiff?)$/i.test(n); }   // 不含 svg (防 XSS, svg 按附件下载)
+  function isVideo(n){ return /\.(mp4|m4v|webm|ogv|mov|avi|mkv|flv|ts|3gp|mpg|mpeg|wmv)$/i.test(n); }
+  function isAudio(n){ return /\.(mp3|wav|flac|ogg|m4a|aac|opus|wma|aif|aiff)$/i.test(n); }
   function isArchive(n){ return /\.(zip|rar|7z|tar|gz|bz2|xz|iso|jar)$/i.test(n); }
   function previewUrl(rel){ return 'preview/' + rel.split('/').map(encodeURIComponent).join('/'); }
   function thumbUrl(rel){ return 'thumb/' + rel.split('/').map(encodeURIComponent).join('/'); }
@@ -528,10 +560,25 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   function renderList(files){
     var isAdmin = localStorage.getItem('pan_admin') === '1';
     files.forEach(function(f){
+      var rel = relOf(f.name);
       var tr = document.createElement('tr');
+      if (batchMode){
+        tr.className = selected[rel] ? 'selected-row' : '';
+        var tdCb = document.createElement('td');
+        tdCb.className = 'cb';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.className = 'batch-cb';
+        cb.checked = !!selected[rel];
+        cb.addEventListener('click', function(e){ e.stopPropagation(); toggleSelect(rel); });
+        tdCb.appendChild(cb);
+        tr.appendChild(tdCb);
+      }
       var tdName = document.createElement('td');
       tdName.className = 'fname'; tdName.title = f.name;
-      if (f.is_dir){
+      if (batchMode){
+        tdName.textContent = f.is_dir ? '📁 ' + f.name : f.name;
+        tdName.onclick = function(){ toggleSelect(rel); };
+      } else if (f.is_dir){
         tdName.textContent = '📁 ' + f.name;
         tdName.onclick = function(){ enterDir(f.name); };
       } else {
@@ -626,7 +673,17 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       tile.appendChild(body);
       tile.appendChild(nm);
       tile.appendChild(sz);
-      if (f.is_dir){
+      if (batchMode){
+        var rel = relOf(f.name);
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.className = 'batch-cb';
+        cb.checked = !!selected[rel];
+        cb.addEventListener('click', function(e){ e.stopPropagation(); toggleSelect(rel); });
+        tile.appendChild(cb);
+        tile.classList.toggle('selected', !!selected[rel]);
+        tile.onclick = function(){ toggleSelect(rel); };
+        gridView.appendChild(tile);
+      } else if (f.is_dir){
         tile.onclick = function(){ enterDir(f.name); };
         gridView.appendChild(tile);
       } else if (isMedia(f.name)){
@@ -678,6 +735,80 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
         refreshFiles();
       })
       .catch(function(e){ toast(e.message, 'err'); });
+  }
+
+  // ---------- 批量管理 (列表/浏览视图通用) ----------
+  function toggleSelect(rel){
+    if (selected[rel]){ delete selected[rel]; } else { selected[rel] = true; }
+    renderFiles(currentFiles);
+    updateBatchCount();
+  }
+  function updateBatchCount(){
+    var n = Object.keys(selected).length;
+    if (tHide('batch_selected')){ batchCount.classList.add('hidden'); }
+    else { batchCount.classList.remove('hidden'); batchCount.textContent = t('batch_selected').split('{n}').join(n); }
+    btnBatchDownload.disabled = n === 0;
+    btnBatchDelete.disabled = n === 0;
+  }
+  function setBatchMode(on){
+    batchMode = on;
+    selected = {};
+    batchBar.classList.toggle('hidden', !on);
+    btnBatch.classList.toggle('active', on);
+    btnBatch.textContent = t(on ? 'btn_batch_exit' : 'btn_batch');
+    renderFiles(currentFiles);
+    updateBatchCount();
+  }
+  function batchDownload(){
+    var rels = Object.keys(selected);
+    if (!rels.length) return;
+    var url;
+    var single = rels.length === 1 ? rels[0] : '';
+    var isDir = false;
+    if (single){
+      for (var i = 0; i < currentFiles.length; i++){
+        if (relOf(currentFiles[i].name) === single){ isDir = !!currentFiles[i].is_dir; break; }
+      }
+    }
+    if (single && !isDir){
+      url = fileUrl(single.split('/').pop());
+    } else {
+      url = 'api/zip?' + rels.map(function(r){ return 'p=' + encodeURIComponent(r); }).join('&');
+    }
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  function batchDelete(){
+    var rels = Object.keys(selected);
+    if (!rels.length) return;
+    if (!confirm(t('batch_confirm_delete').split('{n}').join(rels.length))) return;
+    var succ = 0, failn = 0;
+    var chain = Promise.resolve();
+    rels.forEach(function(rel){
+      chain = chain.then(function(){
+        return api('/api/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: rel})})
+          .then(function(){ succ++; })
+          .catch(function(){ failn++; });
+      });
+    });
+    chain.then(function(){
+      toast(t('batch_delete_result').split('{n}').join(succ).split('{m}').join(failn), failn ? 'err' : 'ok');
+      setBatchMode(false);
+      refreshFiles();
+    });
+  }
+
+  // ---------- 预览缩放 (视频: 滚轮 / ↑↓ 键) ----------
+  function mediaZoomStep(delta){
+    var v = mediaStage.querySelector('video');
+    if (!v) return;
+    mediaZoom = Math.min(3, Math.max(0.5, mediaZoom + delta));
+    v.style.transform = 'scale(' + mediaZoom + ')';
+    zoomBadge.textContent = Math.round(mediaZoom * 100) + '%';
   }
   function mkdir(){
     var nn = prompt(t('mkdir_prompt'), '');
@@ -763,17 +894,23 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     var name = rel.split('/').pop();
     mediaName.textContent = rel;
     mediaStage.innerHTML = '';
-    var ext = name.split('.').pop().toLowerCase();
+    mediaZoom = 1;
     var url = 'preview/' + rel.split('/').map(encodeURIComponent).join('/');
     var el;
-    if (['mp4','m4v','webm','ogv','mov'].indexOf(ext) >= 0){
+    if (isVideo(name)){
       el = document.createElement('video'); el.src = url; el.controls = true; el.autoplay = true;
-    } else if (['mp3','wav','flac','ogg','m4a','aac'].indexOf(ext) >= 0){
+      el.addEventListener('wheel', function(e){
+        e.preventDefault();
+        mediaZoomStep(e.deltaY < 0 ? 0.1 : -0.1);
+      }, {passive: false});
+    } else if (isAudio(name)){
       el = document.createElement('audio'); el.src = url; el.controls = true; el.autoplay = true;
     } else {
       el = document.createElement('img'); el.src = url;
     }
     mediaStage.appendChild(el);
+    zoomBadge.classList.toggle('hidden', el.tagName !== 'VIDEO');
+    if (el.tagName === 'VIDEO') zoomBadge.textContent = '100%';
     var multi = mediaFiles.length > 1;
     mediaPrev.style.visibility = multi ? 'visible' : 'hidden';
     mediaNext.style.visibility = multi ? 'visible' : 'hidden';
@@ -781,6 +918,8 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   function closeMedia(){
     mediaModal.classList.add('hidden');
     mediaStage.innerHTML = '';
+    mediaZoom = 1;
+    zoomBadge.classList.add('hidden');
   }
   function mediaNav(delta){
     mediaIndex = (mediaIndex + delta + mediaFiles.length) % mediaFiles.length;
@@ -1047,6 +1186,10 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   btnRefresh.addEventListener('click', refreshFiles);
   btnViewList.addEventListener('click', function(){ setView('list'); });
   btnViewBrowse.addEventListener('click', function(){ setView('browse'); });
+  btnBatch.addEventListener('click', function(){ setBatchMode(!batchMode); });
+  btnBatchExit.addEventListener('click', function(){ setBatchMode(false); });
+  btnBatchDownload.addEventListener('click', batchDownload);
+  btnBatchDelete.addEventListener('click', batchDelete);
   btnUpload.addEventListener('click', function(){
     if (!token){ openLogin(); toast(t('need_login_first'), 'err'); return; }
     fileInput.click();
@@ -1090,6 +1233,8 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     if (e.key === 'Escape') closeMedia();
     else if (e.key === 'ArrowLeft') mediaNav(-1);
     else if (e.key === 'ArrowRight') mediaNav(1);
+    else if (e.key === 'ArrowUp'){ e.preventDefault(); mediaZoomStep(0.1); }
+    else if (e.key === 'ArrowDown'){ e.preventDefault(); mediaZoomStep(-0.1); }
   });
 
   init();
