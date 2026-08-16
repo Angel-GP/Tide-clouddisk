@@ -899,10 +899,6 @@ tr.selected-row td{background:var(--line)}
     var el;
     if (isVideo(name)){
       el = document.createElement('video'); el.src = url; el.controls = true; el.autoplay = true;
-      el.addEventListener('wheel', function(e){
-        e.preventDefault();
-        mediaZoomStep(e.deltaY < 0 ? 0.1 : -0.1);
-      }, {passive: false});
     } else if (isAudio(name)){
       el = document.createElement('audio'); el.src = url; el.controls = true; el.autoplay = true;
     } else {
@@ -1228,6 +1224,13 @@ tr.selected-row td{background:var(--line)}
   });
   hoverEl.addEventListener('mouseleave', clearHover);
   mediaModal.addEventListener('click', function(e){ if (e.target === mediaModal) closeMedia(); });
+  // 视频缩放: 滚轮在预览弹窗内任意位置都生效 (不只视频元素本身)
+  mediaModal.addEventListener('wheel', function(e){
+    if (mediaModal.classList.contains('hidden')) return;
+    if (!mediaStage.querySelector('video')) return;
+    e.preventDefault();
+    mediaZoomStep(e.deltaY < 0 ? 0.1 : -0.1);
+  }, {passive: false});
   document.addEventListener('keydown', function(e){
     if (mediaModal.classList.contains('hidden')) return;
     if (e.key === 'Escape') closeMedia();

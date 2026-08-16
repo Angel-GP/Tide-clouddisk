@@ -37,7 +37,7 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
-APP_VERSION = "1.2.1"   # 程序版本号 (发版时与 Release 标签保持一致)
+APP_VERSION = "1.2.2"   # 程序版本号 (发版时与 Release 标签保持一致)
 
 # ----------------------------------------------------------------------------
 # 基础配置
