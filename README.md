@@ -32,7 +32,7 @@
 
 ### 方式一:直接运行 exe(推荐,无需 Python)
 
-到 [Releases](https://github.com/Angel-GP/Tide-clouddisk/releases) 下载最新的 `Tide cloud.exe`(由 GitHub Actions 自动构建),双击运行即可。配置与上传文件保存在 exe 所在目录旁,整个文件夹可随意拷贝到其他 Windows 电脑/服务器使用。
+到 [Releases](https://github.com/Angel-GP/Tide-clouddisk/releases) 下载最新的 `Tide_cloud.exe`(由 GitHub Actions 自动构建),双击运行即可。配置与上传文件保存在 exe 所在目录旁,整个文件夹可随意拷贝到其他 Windows 电脑/服务器使用。
 
 ### 方式二:源码运行(需要 Python 3.8+)
 
@@ -60,8 +60,8 @@
 
 1. 把整个程序文件夹上传到 Windows 服务器(云主机/VPS/家中公网电脑均可)
 2. 启动服务,二选一:
-   - 双击 `Tide cloud.exe`(图形界面)
-   - 无窗口纯服务:`Tide cloud.exe --headless`,或 `python gui.py --headless`,或 `python server.py`
+   - 双击 `Tide_cloud.exe`(图形界面)
+   - 无窗口纯服务:`Tide_cloud.exe --headless`,或 `python gui.py --headless`,或 `python server.py`
 3. 放行端口:
    - 程序会尝试自动添加 Windows 防火墙规则(需管理员权限)
    - **云服务器还需在控制台"安全组/防火墙"放行对应端口**
@@ -123,10 +123,10 @@ python gui.py --selftest            # 桌面端无窗口自检
 
 ```bash
 # 1. 一键脚本 (推荐): 双击程序目录下的 start_debug.bat
-#    (自动优先使用 Tide cloud.exe --debug, 没有 exe 则用 Python 源码)
+#    (自动优先使用 Tide_cloud.exe --debug, 没有 exe 则用 Python 源码)
 
 # 2. 命令行: 先 cd 到 exe 所在目录, 再运行
-"Tide cloud.exe" --debug
+"Tide_cloud.exe" --debug
 
 # 3. 源码方式
 python gui.py --debug     # 桌面管理端
