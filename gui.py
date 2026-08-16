@@ -1266,6 +1266,9 @@ def _main():
     except Exception:
         pass
     panserver.load_config()
+    # 调试模式: --debug 或 debug 参数 -> 实时日志写入 debug\日期_v版本.log
+    if "--debug" in sys.argv or "debug" in sys.argv:
+        panserver.setup_debug_log()
     if "--headless" in sys.argv:
         # 无窗口模式: 仅启动服务 (服务器场景 / 自动化测试用)
         cfg = panserver.CONFIG

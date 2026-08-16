@@ -25,6 +25,7 @@ import hashlib
 import http.cookies
 import json
 import os
+import platform
 import re
 import secrets
 import shutil
@@ -35,6 +36,8 @@ import time
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+APP_VERSION = "1.0.9"   # 程序版本号 (发版时与 Release 标签保持一致)
 
 # ----------------------------------------------------------------------------
 # 基础配置
@@ -77,6 +80,7 @@ WINDOWS_DEVICE = re.compile(r"COM[1-9]|LPT[1-9]")
 
 
 LOG_SINKS = []  # 桌面管理端注册的日志回调
+DEBUG_LOG = None  # 调试模式下的日志文件句柄
 
 
 def log(*args):
@@ -90,6 +94,109 @@ def log(*args):
             sink(line)
         except Exception:
             pass
+    if DEBUG_LOG is not None:
+        try:
+            DEBUG_LOG.write(line + "\n")
+            DEBUG_LOG.flush()     # 实时落盘
+        except Exception:
+            pass
+
+
+def collect_sysinfo():
+    """收集操作系统与硬件信息 (注册表 + ctypes, 纯标准库)"""
+    lines = []
+    try:
+        lines.append("操作系统: %s" % platform.platform())
+        lines.append("系统版本号: %s" % platform.version())
+    except Exception:
+        pass
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            def _reg(key, sub, name):
+                try:
+                    k = winreg.OpenKey(key, sub)
+                    v, _ = winreg.QueryValueEx(k, name)
+                    winreg.CloseKey(k)
+                    return str(v).strip()
+                except Exception:
+                    return ""
+
+            bios = r"HARDWARE\DESCRIPTION\System\BIOS"
+            manu = _reg(winreg.HKEY_LOCAL_MACHINE, bios, "SystemManufacturer")
+            model = _reg(winreg.HKEY_LOCAL_MACHINE, bios, "SystemProductName")
+            if model:
+                lines.append("电脑型号: %s %s" % (manu, model))
+            board = (_reg(winreg.HKEY_LOCAL_MACHINE, bios, "BaseBoardManufacturer")
+                     + " " + _reg(winreg.HKEY_LOCAL_MACHINE, bios, "BaseBoardProduct")).strip()
+            if board:
+                lines.append("主板: %s" % board)
+            cpu = _reg(winreg.HKEY_LOCAL_MACHINE,
+                       r"HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString")
+            if cpu:
+                lines.append("CPU: %s" % cpu)
+        except Exception:
+            pass
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            m = MEMORYSTATUSEX()
+            m.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+                lines.append("内存: %.1f GB" % (m.ullTotalPhys / 1024 ** 3))
+        except Exception:
+            pass
+        try:
+            mask = ctypes.windll.kernel32.GetLogicalDrives()
+            drives = []
+            for i in range(26):
+                if mask & (1 << i):
+                    d = chr(65 + i)
+                    try:
+                        u = shutil.disk_usage(d + ":\\")
+                        drives.append("%s: %.1fGB" % (d, u.total / 1024 ** 3))
+                    except Exception:
+                        pass
+            if drives:
+                lines.append("硬盘: " + "  ".join(drives))
+        except Exception:
+            pass
+    return lines
+
+
+def setup_debug_log():
+    """调试模式: 实时日志写入 debug\\日期_v版本.log, 文件头含程序版本与系统硬件信息"""
+    global DEBUG_LOG
+    try:
+        debug_dir = os.path.join(APP_DIR, "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        fname = "%s_v%s.log" % (time.strftime("%Y%m%d"), APP_VERSION)
+        fpath = os.path.join(debug_dir, fname)
+        new_file = not os.path.exists(fpath)
+        fh = open(fpath, "a", encoding="utf-8")
+        if new_file:
+            fh.write("=" * 60 + "\n")
+            fh.write("Tide cloud 调试日志\n")
+            fh.write("程序版本: v%s\n" % APP_VERSION)
+            fh.write("日志时间: %s\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+            for line in collect_sysinfo():
+                fh.write(line + "\n")
+            fh.write("=" * 60 + "\n")
+        fh.flush()
+        DEBUG_LOG = fh
+        log("调试日志已启用: %s" % fpath)
+        return fpath
+    except Exception as e:
+        log("调试日志初始化失败: %s" % e)
+        return None
 
 
 # ----------------------------------------------------------------------------
@@ -1239,7 +1346,8 @@ class PanServer(ThreadingHTTPServer):
 def banner(bind_ip, port):
     ips = get_local_ips()
     log("=" * 52)
-    log("  %s 已启动" % CONFIG["title"])
+    log("  %s 已启动   (程序版本 v%s)" % (CONFIG["title"], APP_VERSION))
+    log("  操作系统: %s" % platform.platform())
     log("  监听地址: %s:%d" % (bind_ip, port))
     for ip in ips:
         log("  访问地址:   http://%s:%d/" % (ip, port))
@@ -1331,9 +1439,13 @@ def main():
     parser.add_argument("--ip", help="监听 IP (覆盖 config.json 中的设置)")
     parser.add_argument("--port", type=int, help="监听端口 (覆盖 config.json 中的设置)")
     parser.add_argument("--no-browser", action="store_true", help="启动时不自动打开浏览器")
-    args = parser.parse_args()
+    args = parser.parse_known_args()[0]
 
     load_config()
+
+    # 调试模式: --debug 或 debug 参数 -> 实时日志写入 debug\日期_v版本.log
+    if "--debug" in sys.argv or "debug" in sys.argv:
+        setup_debug_log()
 
     bind_ip = args.ip if args.ip is not None else (CONFIG.get("ip") or "0.0.0.0")
     port = args.port if args.port is not None else CONFIG["port"]

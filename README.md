@@ -112,6 +112,7 @@ caddy reverse-proxy --from your.domain.com --to 127.0.0.1:8080
 python server.py --ip 0.0.0.0       # 监听所有网卡(公网部署默认)
 python server.py --port 9000        # 指定端口
 python server.py --no-browser       # 启动时不自动打开浏览器
+python server.py --debug            # 调试模式: 实时日志写入 debug\日期_v版本.log (文件头含系统/硬件信息)
 python gui.py --headless            # 无窗口纯服务模式(服务器常用)
 python gui.py --selftest            # 桌面端无窗口自检
 ```

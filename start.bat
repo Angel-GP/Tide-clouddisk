@@ -19,7 +19,7 @@ if not defined PYCMD (
     exit /b 1
 )
 
-%PYCMD% server.py
+%PYCMD% server.py %*
 if errorlevel 3 (
     echo.
     echo Server exited. Restarting...
