@@ -4,6 +4,7 @@ config.json.bak
 uploads/
 thumbs/
 debug/
+logs/
 error.log
 
 # Python

@@ -37,7 +37,7 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
-APP_VERSION = "1.1.4"   # 程序版本号 (发版时与 Release 标签保持一致)
+APP_VERSION = "1.1.8"   # 程序版本号 (发版时与 Release 标签保持一致)
 
 # ----------------------------------------------------------------------------
 # 基础配置
@@ -64,6 +64,7 @@ DEFAULTS = {
     "texts": {},             # 前端自定义文案 (键 -> 文本, 覆盖前端默认值)
     "hidden_files": [],      # 管理员隐藏的文件/文件夹相对路径列表 (普通用户与未登录不可见)
     "trust_proxy": False,    # 是否信任反向代理透传的 X-Forwarded-For (默认不信任, 防伪造绕过登录限流)
+    "audit_log": True,       # 是否启用审计日志 (登录/上传/删除/重命名/隐藏/账号/设置变更写入 logs\audit_日期.log)
 }
 
 SESSION_HOURS = 12          # 登录有效期 (小时)
@@ -83,6 +84,7 @@ WINDOWS_DEVICE = re.compile(r"COM[1-9]|LPT[1-9]")
 
 LOG_SINKS = []  # 桌面管理端注册的日志回调
 DEBUG_LOG = None  # 调试模式下的日志文件句柄
+AUDIT_LOG = None  # 审计日志文件句柄 (安全事件记录)
 
 
 def log(*args):
@@ -102,6 +104,55 @@ def log(*args):
             DEBUG_LOG.flush()     # 实时落盘
         except Exception:
             pass
+
+
+def setup_audit_log():
+    """审计日志: 安全事件写入 logs\\audit_日期.log (登录/上传/删除/重命名/隐藏/账号/设置变更)"""
+    global AUDIT_LOG
+    try:
+        log_dir = os.path.join(APP_DIR, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        fpath = os.path.join(log_dir, "audit_%s.log" % time.strftime("%Y%m%d"))
+        new_file = not os.path.exists(fpath)
+        fh = open(fpath, "a", encoding="utf-8")
+        if new_file:
+            fh.write("=" * 60 + "\n")
+            fh.write("Tide cloud 审计日志\n")
+            fh.write("程序版本: v%s\n" % APP_VERSION)
+            fh.write("启用时间: %s\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+            fh.write("=" * 60 + "\n")
+        fh.flush()
+        AUDIT_LOG = fh
+        log("审计日志已启用: %s" % fpath)
+    except Exception as e:
+        log("审计日志初始化失败: %s" % e)
+
+
+def audit(event, detail=""):
+    """记录安全审计事件 (同时写入审计文件与常规日志)"""
+    line = "[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), event + (("  " + detail) if detail else ""))
+    if AUDIT_LOG is not None:
+        try:
+            AUDIT_LOG.write(line + "\n")
+            AUDIT_LOG.flush()
+        except Exception:
+            pass
+    log(event + (("  " + detail) if detail else ""))
+
+
+def apply_audit_log(enabled):
+    """运行时开启/关闭审计日志 (设置页开关立即生效)"""
+    global AUDIT_LOG
+    if enabled:
+        if AUDIT_LOG is None:
+            setup_audit_log()
+    elif AUDIT_LOG is not None:
+        try:
+            AUDIT_LOG.close()
+        except Exception:
+            pass
+        AUDIT_LOG = None
+        log("审计日志已关闭")
 
 
 def collect_sysinfo():
@@ -257,6 +308,8 @@ def load_config():
         CONFIG["texts"] = {}
     if not isinstance(CONFIG.get("trust_proxy"), bool):
         CONFIG["trust_proxy"] = False
+    if not isinstance(CONFIG.get("audit_log"), bool):
+        CONFIG["audit_log"] = True
 
 
 def save_config():
@@ -327,6 +380,13 @@ def update_settings(data):
         return False, "trust_proxy 必须是布尔值"
     if tp != CONFIG.get("trust_proxy", False):
         CONFIG["trust_proxy"] = tp
+
+    al = data.get("audit_log", CONFIG.get("audit_log", True))
+    if not isinstance(al, bool):
+        return False, "audit_log 必须是布尔值"
+    if al != CONFIG.get("audit_log", True):
+        CONFIG["audit_log"] = al
+        apply_audit_log(al)
 
     CONFIG.update({"ip": ip, "port": port, "title": title,
                    "max_upload_mb": max_mb, "upload_dir": ud})
@@ -900,6 +960,7 @@ class PanHandler(BaseHTTPRequestHandler):
            max_upload_mb=CONFIG["max_upload_mb"],
            upload_dir=CONFIG.get("upload_dir", "uploads"),
            trust_proxy=CONFIG.get("trust_proxy", False),
+           audit_log=CONFIG.get("audit_log", True),
            texts=CONFIG.get("texts", {}),
            addresses=get_local_ips())
 
@@ -1092,6 +1153,7 @@ class PanHandler(BaseHTTPRequestHandler):
         allowed, wait = login_allowed(ip)
         if not allowed:
             self._log(429)
+            audit("登录锁定拒绝", "来源=%s" % ip)
             return fail(self, "尝试次数过多, 请 %d 秒后再试" % wait, 429)
         data = read_json_body(self)
         if not isinstance(data, dict):
@@ -1103,6 +1165,7 @@ class PanHandler(BaseHTTPRequestHandler):
         if u and secrets.compare_digest(hash_password(pwd, u["salt"]), u["password_hash"]):
             LOGIN_FAILS.pop(ip, None)
             token = create_session(name)
+            audit("登录成功", "用户=%s 来源=%s" % (name, ip))
             # 同时下发 Cookie, 使下载/预览等普通链接请求也自动携带登录态
             self._pending_headers = getattr(self, "_pending_headers", []) + [
                 ("Set-Cookie",
@@ -1113,6 +1176,7 @@ class PanHandler(BaseHTTPRequestHandler):
         entry[0] += 1
         entry[1] = time.time()
         LOGIN_FAILS[ip] = entry
+        audit("登录失败", "用户=%s 来源=%s 第%d次" % (name, ip, entry[0]))
         self._log(401)
         fail(self, "用户名或密码错误", 401)
 
@@ -1213,6 +1277,7 @@ class PanHandler(BaseHTTPRequestHandler):
             self._log(500)
             return fail(self, "上传中断或失败", 500)
         meta_set_owner(file_rel, me)   # 记录文件属主
+        audit("上传文件", "路径=%s 大小=%d 用户=%s 来源=%s" % (file_rel, written, me, client_ip(self)))
         log("上传完成: %s (%d 字节) 来自 %s" % (name, written, self.client_address[0]))
         self._log(200)
         ok(self, name=name, size=written)
@@ -1255,12 +1320,14 @@ class PanHandler(BaseHTTPRequestHandler):
             return fail(self, "删除失败: %s" % e, 500)
         migrate_hidden(rel, None)
         meta_migrate(rel, None)
+        audit("删除", "路径=%s 类型=%s 用户=%s 来源=%s" % (rel, "文件夹" if is_dir else "文件", me, client_ip(self)))
         log("已删除: %s%s" % (rel, " (文件夹)" if is_dir else ""))
         self._log(200)
         ok(self)
 
     def _api_mkdir(self):
-        if not check_token(self):
+        me = check_token(self)
+        if not me:
             self._log(401)
             return fail(self, "需要登录", 401)
         data = read_json_body(self)
@@ -1289,11 +1356,13 @@ class PanHandler(BaseHTTPRequestHandler):
             self._log(500)
             return fail(self, "创建失败: %s" % e, 500)
         log("已创建文件夹: %s" % rel)
+        audit("新建文件夹", "路径=%s 用户=%s 来源=%s" % (rel, me, client_ip(self)))
         self._log(200)
         ok(self, path=rel)
 
     def _api_hide(self):
-        if not check_admin(self):
+        me = check_admin(self)
+        if not me:
             self._log(403)
             return fail(self, "需要管理员权限", 403)
         data = read_json_body(self)
@@ -1310,12 +1379,14 @@ class PanHandler(BaseHTTPRequestHandler):
             return fail(self, "文件不存在", 404)
         hidden = bool(data.get("hidden"))
         set_hidden(rel, hidden)
+        audit("隐藏" if hidden else "取消隐藏", "路径=%s 用户=%s 来源=%s" % (rel, me, client_ip(self)))
         log("已%s: %s" % ("隐藏" if hidden else "取消隐藏", rel))
         self._log(200)
         ok(self, path=rel, hidden=hidden)
 
     def _api_rename(self):
-        if not check_admin(self):
+        me = check_admin(self)
+        if not me:
             self._log(403)
             return fail(self, "需要管理员权限", 403)
         data = read_json_body(self)
@@ -1351,12 +1422,14 @@ class PanHandler(BaseHTTPRequestHandler):
             return fail(self, "重命名失败: %s" % e, 500)
         migrate_hidden(rel, new_rel)
         meta_migrate(rel, new_rel)
+        audit("重命名", "原=%s 新=%s 用户=%s 来源=%s" % (rel, new_rel, me, client_ip(self)))
         log("已重命名: %s -> %s" % (rel, new_rel))
         self._log(200)
         ok(self, old_name=rel, new_name=new_rel)
 
     def _api_save_settings(self):
-        if not check_admin(self):
+        me = check_admin(self)
+        if not me:
             self._log(403)
             return fail(self, "需要管理员权限", 403)
         data = read_json_body(self)
@@ -1365,6 +1438,10 @@ class PanHandler(BaseHTTPRequestHandler):
             self._log(400)
             return fail(self, err)
         log("设置已保存 (ip=%s, port=%d, title=%s)" % (CONFIG.get("ip") or "auto", CONFIG["port"], CONFIG["title"]))
+        audit("修改设置", "ip=%s port=%d title=%s upload_dir=%s trust_proxy=%s audit_log=%s 用户=%s 来源=%s" % (
+            CONFIG.get("ip") or "auto", CONFIG["port"], CONFIG["title"],
+            CONFIG.get("upload_dir", "uploads"), CONFIG.get("trust_proxy", False), CONFIG.get("audit_log", True),
+            me, client_ip(self)))
         if need_restart:
             host = (self.headers.get("Host") or "").split(":")[0] or "127.0.0.1"
             new_ip = CONFIG.get("ip") or host
@@ -1385,7 +1462,8 @@ class PanHandler(BaseHTTPRequestHandler):
                         for u in CONFIG.get("users", [])])
 
     def _api_add_user(self):
-        if not check_admin(self):
+        me = check_admin(self)
+        if not me:
             self._log(403)
             return fail(self, "需要管理员权限", 403)
         data = read_json_body(self)
@@ -1412,11 +1490,13 @@ class PanHandler(BaseHTTPRequestHandler):
         })
         save_config()
         log("已添加账号: %s" % username)
+        audit("添加账号", "账号=%s 管理员=%s 用户=%s 来源=%s" % (username, bool(data.get("is_admin")), me, client_ip(self)))
         self._log(200)
         ok(self)
 
     def _api_delete_user(self):
-        if not check_admin(self):
+        me = check_admin(self)
+        if not me:
             self._log(403)
             return fail(self, "需要管理员权限", 403)
         data = read_json_body(self)
@@ -1438,6 +1518,7 @@ class PanHandler(BaseHTTPRequestHandler):
         kill_sessions_of(target)
         save_config()
         log("已删除账号: %s" % target)
+        audit("删除账号", "账号=%s 用户=%s 来源=%s" % (target, me, client_ip(self)))
         self._log(200)
         ok(self)
 
@@ -1468,11 +1549,13 @@ class PanHandler(BaseHTTPRequestHandler):
         if target != me:
             kill_sessions_of(target)   # 重置他人密码后, 注销其所有登录
         log("已重置密码: %s" % target)
+        audit("重置密码", "账号=%s 操作者=%s 来源=%s" % (target, me, client_ip(self)))
         self._log(200)
         ok(self)
 
     def _api_set_admin(self):
-        if not check_admin(self):
+        me = check_admin(self)
+        if not me:
             self._log(403)
             return fail(self, "需要管理员权限", 403)
         data = read_json_body(self)
@@ -1491,6 +1574,7 @@ class PanHandler(BaseHTTPRequestHandler):
         u["is_admin"] = is_admin
         save_config()
         log("已%s管理员权限: %s" % ("授予" if is_admin else "取消", target))
+        audit("变更管理员权限", "账号=%s 操作=%s 用户=%s 来源=%s" % (target, "授予" if is_admin else "取消", me, client_ip(self)))
         self._log(200)
         ok(self)
 
@@ -1652,6 +1736,8 @@ def main():
     # 调试模式: --debug 或 debug 参数 -> 实时日志写入 debug\日期_v版本.log
     if "--debug" in sys.argv or "debug" in sys.argv:
         setup_debug_log()
+    # 审计日志 (默认开启, 可在设置中关闭)
+    apply_audit_log(CONFIG.get("audit_log", True))
 
     bind_ip = args.ip if args.ip is not None else (CONFIG.get("ip") or "0.0.0.0")
     port = args.port if args.port is not None else CONFIG["port"]

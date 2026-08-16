@@ -81,6 +81,7 @@ DEFAULT_TEXTS = {
     "settings_title": "服务器设置", "field_title": "服务器标题", "field_ip": "监听 IP",
     "field_port": "端口", "field_max": "单文件大小上限 (MB, 0 = 不限)", "field_upload_dir": "上传目录",
     "field_trust_proxy": "信任反向代理 (X-Forwarded-For)",
+    "field_audit_log": "启用审计日志 (登录/上传/删除/重命名/隐藏/账号/设置变更)",
     "hint_settings": "IP 留空 = 自动监听所有网卡; 修改 IP/端口后服务器自动重启并跳转到新地址。仅管理员可修改设置。",
     "btn_save_settings": "保存设置",
     "login_title": "登录", "login_username": "用户名", "login_password": "密码", "btn_cancel": "取消",
@@ -113,7 +114,8 @@ TEXT_GROUPS = [
                 "upload_success", "upload_overwritten", "upload_skipped", "upload_failed",
                 "need_login_first", "confirm_overwrite"]),
     ("设置页", ["settings_need_login", "settings_need_admin", "settings_title", "field_title", "field_ip",
-                "field_port", "field_max", "field_upload_dir", "field_trust_proxy", "hint_settings", "btn_save_settings"]),
+                "field_port", "field_max", "field_upload_dir", "field_trust_proxy", "field_audit_log",
+                "hint_settings", "btn_save_settings"]),
     ("登录弹窗", ["login_title", "login_username", "login_password", "btn_cancel", "login_success",
                   "login_failed", "login_error_connect", "login_error_empty"]),
     ("提示与弹窗", ["need_login", "logout_done", "deleted", "delete_failed", "link_copied", "copy_failed",
@@ -467,6 +469,7 @@ class PanGUI:
         self.var_max = tk.StringVar()
         self.var_upload = tk.StringVar()
         self.var_trust_proxy = tk.BooleanVar(value=False)
+        self.var_audit_log = tk.BooleanVar(value=True)
 
         grid = ttk.Frame(f)
         grid.pack(fill="x")
@@ -486,10 +489,12 @@ class PanGUI:
         add_row(4, "上传目录", uprow)
         ttk.Checkbutton(grid, text="信任反向代理 (X-Forwarded-For, 仅部署于可信反代后勾选)",
                         variable=self.var_trust_proxy).grid(row=5, column=1, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(grid, text="启用审计日志 (登录/上传/删除/重命名/隐藏/账号/设置变更, 写入 logs\\audit_日期.log)",
+                        variable=self.var_audit_log).grid(row=6, column=1, sticky="w", pady=(4, 0))
         ttk.Label(grid, text="IP 留空 = 自动监听所有网卡; 修改 IP/端口后服务自动重启。",
-                  foreground="#888888").grid(row=6, column=1, sticky="w", pady=(4, 0))
+                  foreground="#888888").grid(row=7, column=1, sticky="w", pady=(4, 0))
         ttk.Label(grid, text="上传目录留空 = 程序目录下的 uploads; 修改后立即生效(原目录文件不会自动搬移)。",
-                  foreground="#888888").grid(row=7, column=1, sticky="w")
+                  foreground="#888888").grid(row=8, column=1, sticky="w")
         ttk.Button(f, text="保存设置", command=self.save_settings).pack(pady=(16, 0))
 
     def _build_texts_tab(self, nb):
@@ -1088,6 +1093,7 @@ class PanGUI:
         self.var_max.set(str(cfg.get("max_upload_mb", 2048)))
         self.var_upload.set(cfg.get("upload_dir", "uploads"))
         self.var_trust_proxy.set(bool(cfg.get("trust_proxy", False)))
+        self.var_audit_log.set(bool(cfg.get("audit_log", True)))
         self.cmb_ip.config(values=[""] + panserver.get_local_ips() + ["0.0.0.0"])
 
     def browse_upload_dir(self):
@@ -1123,6 +1129,7 @@ class PanGUI:
             "max_upload_mb": maxm,
             "upload_dir": self.var_upload.get().strip() or "uploads",
             "trust_proxy": bool(self.var_trust_proxy.get()),
+            "audit_log": bool(self.var_audit_log.get()),
         })
         if err:
             messagebox.showerror("保存失败", err)
@@ -1288,6 +1295,9 @@ def _main():
     # 调试模式: --debug 或 debug 参数 -> 实时日志写入 debug\日期_v版本.log
     if "--debug" in sys.argv or "debug" in sys.argv:
         panserver.setup_debug_log()
+    # 审计日志 (默认开启, 可在设置中关闭)
+    if panserver.CONFIG.get("audit_log", True):
+        panserver.setup_audit_log()
     if "--headless" in sys.argv:
         # 无窗口模式: 仅启动服务 (服务器场景 / 自动化测试用)
         cfg = panserver.CONFIG
