@@ -1176,7 +1176,7 @@ class PanGUI:
             )
             self.tray_icon = pystray.Icon("tide_cloud", img, "Tide cloud", menu)
             self.tray_icon.run_detached()
-            self.append_log("系统托盘已就绪: 最小化/关闭后窗口隐藏, 右键托盘图标可操作")
+            self.append_log("系统托盘已就绪: 最小化窗口即隐藏到托盘; 关闭窗口将停止服务并退出")
         except Exception as e:
             self.tray_icon = None
             self.append_log("系统托盘初始化失败: %s" % e)
@@ -1242,7 +1242,18 @@ class PanGUI:
             pass
 
     def on_close(self):
-        self.hide_to_tray()
+        """点 X 关闭窗口: 停止服务并彻底退出 (只有最小化按钮才进托盘)"""
+        self.append_log("窗口关闭: 正在停止服务并退出程序...")
+        try:
+            panserver.stop_server()
+        except Exception:
+            pass
+        try:
+            if self.tray_icon is not None:
+                self.tray_icon.stop()
+        except Exception:
+            pass
+        self.root.destroy()
 
 
 def main():

@@ -35,9 +35,9 @@ import threading
 import time
 import urllib.parse
 import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
-APP_VERSION = "1.1.2"   # 程序版本号 (发版时与 Release 标签保持一致)
+APP_VERSION = "1.1.4"   # 程序版本号 (发版时与 Release 标签保持一致)
 
 # ----------------------------------------------------------------------------
 # 基础配置
@@ -74,6 +74,7 @@ SESSIONS = {}               # token -> 过期时间戳
 LOGIN_FAILS = {}            # ip -> [失败次数, 最近失败时间]
 RESTART_REQUESTED = False
 CURRENT_SERVER = None
+STOPPING = False            # 服务正在停止 (停止后旧连接再发请求返回 503)
 
 INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 WINDOWS_DEVICE = re.compile(r"COM[1-9]|LPT[1-9]")
@@ -666,6 +667,9 @@ class PanHandler(BaseHTTPRequestHandler):
 
     # ------------------------- GET -------------------------
     def do_GET(self):
+        if STOPPING:
+            self._log(503)
+            return fail(self, "服务已停止", 503)
         try:
             self._route_get()
         except (BrokenPipeError, ConnectionResetError, OSError):
@@ -905,6 +909,9 @@ class PanHandler(BaseHTTPRequestHandler):
 
     # ------------------------- POST -------------------------
     def do_POST(self):
+        if STOPPING:
+            self._log(503)
+            return fail(self, "服务已停止", 503)
         try:
             parsed = urllib.parse.urlsplit(self.path)
             path = urllib.parse.unquote(parsed.path)
@@ -1342,6 +1349,12 @@ class PanServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
+    def server_close(self):
+        # 跳过 ThreadingMixIn 的请求线程等待:
+        # 浏览器 keep-alive 长连接会让请求线程一直等待下一条请求,
+        # join() 会导致"停止服务"卡死且旧连接仍可继续访问。直接关闭监听即可。
+        HTTPServer.server_close(self)
+
 
 def banner(bind_ip, port):
     ips = get_local_ips()
@@ -1377,7 +1390,10 @@ def try_add_firewall_rule():
 
 def stop_server():
     """停止服务 (桌面管理端调用)"""
+    global STOPPING
     if CURRENT_SERVER is not None:
+        STOPPING = True
+        log("正在停止服务...")
         threading.Thread(target=CURRENT_SERVER.shutdown, daemon=True).start()
 
 
@@ -1405,7 +1421,7 @@ def port_in_use(port, bind_ip):
 
 
 def run_server(bind_ip, port, open_browser=True, on_event=None):
-    global CURRENT_SERVER, RESTART_REQUESTED
+    global CURRENT_SERVER, RESTART_REQUESTED, STOPPING
     if on_event is None:
         on_event = lambda kind, info=None: None
 
@@ -1440,6 +1456,7 @@ def run_server(bind_ip, port, open_browser=True, on_event=None):
                         pass
                 return
             banner(bind_ip, port)
+            STOPPING = False
             if bind_ip in ("", "0.0.0.0"):
                 try_add_firewall_rule()
             if open_browser and not opened_browser:
@@ -1458,6 +1475,7 @@ def run_server(bind_ip, port, open_browser=True, on_event=None):
             CURRENT_SERVER.server_close()
             CURRENT_SERVER = None
             if not RESTART_REQUESTED:
+                log("服务已停止")
                 on_event("stopped", None)
                 return
             log("正在应用新配置并重启服务...")
