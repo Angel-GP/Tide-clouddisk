@@ -802,9 +802,9 @@ tr.selected-row td{background:var(--line)}
     });
   }
 
-  // ---------- 预览缩放 (视频: 滚轮 / ↑↓ 键) ----------
+  // ---------- 预览缩放 (视频/图片: 滚轮 / ↑↓ 键) ----------
   function mediaZoomStep(delta){
-    var v = mediaStage.querySelector('video');
+    var v = mediaStage.querySelector('video') || mediaStage.querySelector('img');
     if (!v) return;
     mediaZoom = Math.min(3, Math.max(0.5, mediaZoom + delta));
     v.style.transform = 'scale(' + mediaZoom + ')';
@@ -905,8 +905,9 @@ tr.selected-row td{background:var(--line)}
       el = document.createElement('img'); el.src = url;
     }
     mediaStage.appendChild(el);
-    zoomBadge.classList.toggle('hidden', el.tagName !== 'VIDEO');
-    if (el.tagName === 'VIDEO') zoomBadge.textContent = '100%';
+    var zoomable = (el.tagName === 'VIDEO' || el.tagName === 'IMG');
+    zoomBadge.classList.toggle('hidden', !zoomable);
+    if (zoomable) zoomBadge.textContent = '100%';
     var multi = mediaFiles.length > 1;
     mediaPrev.style.visibility = multi ? 'visible' : 'hidden';
     mediaNext.style.visibility = multi ? 'visible' : 'hidden';
@@ -1224,13 +1225,14 @@ tr.selected-row td{background:var(--line)}
   });
   hoverEl.addEventListener('mouseleave', clearHover);
   mediaModal.addEventListener('click', function(e){ if (e.target === mediaModal) closeMedia(); });
-  // 视频缩放: 滚轮在预览弹窗内任意位置都生效 (不只视频元素本身)
-  mediaModal.addEventListener('wheel', function(e){
+  // 预览缩放: 窗口捕获阶段拦截滚轮 —— 先于视频原生控件/阴影 DOM 的内部处理,
+  // 防止事件被控件拦截导致缩放失效、页面滚动
+  window.addEventListener('wheel', function(e){
     if (mediaModal.classList.contains('hidden')) return;
-    if (!mediaStage.querySelector('video')) return;
+    if (!mediaStage.querySelector('video') && !mediaStage.querySelector('img')) return;
     e.preventDefault();
     mediaZoomStep(e.deltaY < 0 ? 0.1 : -0.1);
-  }, {passive: false});
+  }, {capture: true, passive: false});
   document.addEventListener('keydown', function(e){
     if (mediaModal.classList.contains('hidden')) return;
     if (e.key === 'Escape') closeMedia();
@@ -1238,7 +1240,7 @@ tr.selected-row td{background:var(--line)}
     else if (e.key === 'ArrowRight') mediaNav(1);
     else if (e.key === 'ArrowUp'){ e.preventDefault(); mediaZoomStep(0.1); }
     else if (e.key === 'ArrowDown'){ e.preventDefault(); mediaZoomStep(-0.1); }
-  });
+  }, true);   // 捕获阶段, 防止焦点在视频控件上时事件被其内部拦截
 
   init();
 })();
