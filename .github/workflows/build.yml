@@ -32,7 +32,8 @@ jobs:
       - name: Rename artifact
         shell: pwsh
         run: |
-          $exeName = "Tide" + [char]32 + "cloud.exe"   # 空格用字符码显式拼接, 防止任何解析变形
+          # 资产名用下划线: GitHub 会把 Release 资产文件名中的空格替换成点, 无法规避
+          $exeName = "Tide_cloud.exe"
           Rename-Item -Path dist\PanManager.exe -NewName $exeName
           "ASSET_NAME=$exeName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
@@ -71,9 +72,8 @@ jobs:
           } | ConvertTo-Json
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; "User-Agent" = "actions-build" }
           $rel = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/Angel-GP/Tide-clouddisk/releases" -Headers $headers -ContentType "application/json; charset=utf-8" -Body $body
-          # 资产上传改用 curl 直传 + 硬编码 %20, 不经过 PowerShell 的 URI 重编码 (避免空格被变形)
           $asset = Join-Path "dist" $env:ASSET_NAME
-          $url = "https://uploads.github.com/repos/Angel-GP/Tide-clouddisk/releases/$($rel.id)/assets?name=Tide%20cloud.exe"
+          $url = "https://uploads.github.com/repos/Angel-GP/Tide-clouddisk/releases/$($rel.id)/assets?name=Tide_cloud.exe"
           curl.exe -sS -X POST -H "Authorization: Bearer $env:GH_TOKEN" -H "Content-Type: application/octet-stream" --data-binary "@$asset" "$url"
 
       - name: Upload artifact (手动运行时可下载)
