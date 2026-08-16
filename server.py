@@ -693,6 +693,8 @@ class PanHandler(BaseHTTPRequestHandler):
             self._download(path[len("/files/"):])
         elif path.startswith("/preview/"):
             self._preview(path[len("/preview/"):])
+        elif path.startswith("/thumb/"):
+            self._thumb(path[len("/thumb/"):])
         elif path == "/api/info":
             self._api_info()
         elif path == "/api/list":
@@ -843,6 +845,40 @@ class PanHandler(BaseHTTPRequestHandler):
             self._download_range(full, name, size, range_header, ctype, "inline")
         else:
             self._send_file(full, name, size, 0, size, 200, ctype, "inline")
+
+    def _thumb(self, raw_name):
+        """生成并返回 320px 缩略图 (浏览模式/悬停预览用, 磁盘缓存, 大幅降低大图加载开销)"""
+        rel = safe_relpath(raw_name)
+        full = self._resolve(rel) if rel is not None else None
+        if not full or not os.path.isfile(full):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        if hidden_state(rel)[0] and not check_admin(self):
+            self._log(404)
+            return fail(self, "文件不存在", 404)
+        ext = os.path.splitext(rel)[1].lower()
+        if ext == ".svg":
+            return self._preview(raw_name)   # SVG 矢量小文件, 直接原样返回
+        try:
+            import hashlib
+            from PIL import Image
+            cache_dir = os.path.join(APP_DIR, "thumbs")
+            os.makedirs(cache_dir, exist_ok=True)
+            key = hashlib.md5(rel.encode("utf-8")).hexdigest() + ".jpg"
+            cache_path = os.path.join(cache_dir, key)
+            src_mtime = os.path.getmtime(full)
+            if not os.path.exists(cache_path) or os.path.getmtime(cache_path) < src_mtime:
+                im = Image.open(full)
+                im.thumbnail((320, 320))
+                if im.mode not in ("RGB", "L"):
+                    im = im.convert("RGB")
+                im.save(cache_path, "JPEG", quality=82)
+            self._log(200)
+            return self._serve_file(cache_path)
+        except Exception:
+            pass
+        # 无法生成缩略图 (格式不支持等): 回退为完整预览
+        return self._preview(raw_name)
 
     def _send_file(self, full, name, size, start, length, status,
                    content_type="application/octet-stream", disposition="attachment"):

@@ -315,6 +315,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   var toastEl=$('toast');
 
   var token = localStorage.getItem('pan_token') || '';
+  var sessionVerified = false;   // 登录态必须经服务器核实后才算数 (防止旧 token 假显示已登录)
   var currentTab = 'files';
   var toastTimer = null;
   var currentFiles = [];
@@ -369,6 +370,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     return fetch(path, o).then(function(r){
       if (r.status === 401){
         token = '';
+        sessionVerified = false;
         localStorage.removeItem('pan_token');
         localStorage.removeItem('pan_user');
         localStorage.removeItem('pan_admin');
@@ -487,6 +489,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   function isAudio(n){ return /\.(mp3|wav|flac|ogg|m4a|aac)$/i.test(n); }
   function isArchive(n){ return /\.(zip|rar|7z|tar|gz|bz2|xz|iso|jar)$/i.test(n); }
   function previewUrl(rel){ return 'preview/' + rel.split('/').map(encodeURIComponent).join('/'); }
+  function thumbUrl(rel){ return 'thumb/' + rel.split('/').map(encodeURIComponent).join('/'); }
   function setView(mode){
     viewMode = mode;
     localStorage.setItem('pan_view', mode);
@@ -565,8 +568,9 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
         body.appendChild(icD);
       } else if (isImage(f.name)){
         var im = document.createElement('img');
-        im.src = previewUrl(relOf(f.name));
+        im.src = thumbUrl(relOf(f.name));   // 用缩略图, 避免大图拖垮页面
         im.loading = 'lazy';
+        im.decoding = 'async';
         body.appendChild(im);
       } else if (isVideo(f.name)){
         var vd = document.createElement('video');
@@ -709,7 +713,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
         el.src = url; el.muted = true; el.autoplay = true; el.loop = true; el.controls = true;
       } else {
         el = document.createElement('img');
-        el.src = url;
+        el.src = thumbUrl(rel);   // 悬停预览也用缩略图
       }
       hoverCache[rel] = el;
     }
@@ -768,7 +772,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
 
   // ---------- 登录 ----------
   function updateUserUI(){
-    var logged = !!token;
+    var logged = !!token && sessionVerified;
     var isAdmin = localStorage.getItem('pan_admin') === '1';
     btnLogin.classList.toggle('hidden', logged || tHide('login'));
     btnLogout.classList.toggle('hidden', !logged || tHide('logout'));
@@ -805,6 +809,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       .then(function(data){
         if (data && data.ok){
           token = data.token;
+          sessionVerified = true;
           localStorage.setItem('pan_token', token);
           localStorage.setItem('pan_user', data.username);
           localStorage.setItem('pan_admin', data.is_admin ? '1' : '');
@@ -823,6 +828,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   function doLogout(){
     api('/api/logout', {method:'POST'}).catch(function(){});
     token = '';
+    sessionVerified = false;
     localStorage.removeItem('pan_token');
     localStorage.removeItem('pan_user');
     localStorage.removeItem('pan_admin');
@@ -971,11 +977,13 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       .then(function(d){
         if (d && d.logged){
           token = d.token || token;
+          sessionVerified = true;
           localStorage.setItem('pan_token', token);
           localStorage.setItem('pan_user', d.username);
           localStorage.setItem('pan_admin', d.is_admin ? '1' : '');
         } else {
           token = '';
+          sessionVerified = false;
           localStorage.removeItem('pan_token');
           localStorage.removeItem('pan_user');
           localStorage.removeItem('pan_admin');
@@ -984,6 +992,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
         refreshFiles();
       })
       .catch(function(){
+        sessionVerified = false;   // 无法核实一律按未登录处理, 不假显示已登录
         updateUserUI();
         refreshFiles();
       });
