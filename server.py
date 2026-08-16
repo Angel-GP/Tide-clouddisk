@@ -63,6 +63,7 @@ DEFAULTS = {
     "users": [],             # 账号列表: [{"username","salt","password_hash","is_admin"}]
     "texts": {},             # 前端自定义文案 (键 -> 文本, 覆盖前端默认值)
     "hidden_files": [],      # 管理员隐藏的文件/文件夹相对路径列表 (普通用户与未登录不可见)
+    "trust_proxy": False,    # 是否信任反向代理透传的 X-Forwarded-For (默认不信任, 防伪造绕过登录限流)
 }
 
 SESSION_HOURS = 12          # 登录有效期 (小时)
@@ -249,8 +250,13 @@ def load_config():
         CONFIG["max_upload_mb"] = DEFAULTS["max_upload_mb"]
     if not isinstance(CONFIG.get("hidden_files"), list):
         CONFIG["hidden_files"] = []
+    else:
+        # 迁移旧数据: 隐藏路径统一按 Windows 语义归一化 (防尾部点/空格/大小写别名绕过)
+        CONFIG["hidden_files"] = sorted({norm_component(h) for h in CONFIG["hidden_files"]})
     if not isinstance(CONFIG.get("texts"), dict):
         CONFIG["texts"] = {}
+    if not isinstance(CONFIG.get("trust_proxy"), bool):
+        CONFIG["trust_proxy"] = False
 
 
 def save_config():
@@ -315,6 +321,12 @@ def update_settings(data):
         merged = dict(CONFIG.get("texts", {}))
         merged.update(cleaned)
         CONFIG["texts"] = merged
+
+    tp = data.get("trust_proxy", CONFIG.get("trust_proxy", False))
+    if not isinstance(tp, bool):
+        return False, "trust_proxy 必须是布尔值"
+    if tp != CONFIG.get("trust_proxy", False):
+        CONFIG["trust_proxy"] = tp
 
     CONFIG.update({"ip": ip, "port": port, "title": title,
                    "max_upload_mb": max_mb, "upload_dir": ud})
@@ -398,6 +410,12 @@ def safe_name(name):
     return name
 
 
+def norm_component(c):
+    """Windows 语义归一化: 裁掉尾部点/空格 + 统一小写 (FS 大小写不敏感)"""
+    c = str(c).rstrip(" .")
+    return c.casefold()
+
+
 def valid_component(c):
     """目录/文件名分量校验 (不含路径分隔符)"""
     if not c or c in (".", ".."):
@@ -411,15 +429,25 @@ def valid_component(c):
 
 
 def safe_relpath(p):
-    """把用户传入的相对路径规范化 (POSIX 风格); 含 .. 或非法分量时返回 None"""
+    """把用户传入的相对路径规范化 (POSIX 风格); 含 .. 或非法分量时返回 None
+
+    每个分量裁掉尾部点/空格 (Windows 语义, 与文件系统解析一致), 因此:
+      - ".. ." / ".. " 等别名会被识别为 ".." 并拒绝
+      - "name." 与 "name" 解析到同一文件, 无法借此绕过隐藏检查
+    (保留原始大小写, 仅用于文件系统访问; 匹配类检查另行归一化)
+    """
     p = str(p or "").replace("\\", "/").strip()
     if not p:
         return ""
-    parts = p.strip("/").split("/")
-    for c in parts:
-        if c == ".." or not valid_component(c):
+    norm = []
+    for c in p.strip("/").split("/"):
+        c2 = c.rstrip(" .")
+        # 注意: ".." 经 rstrip 后会变成空串, 必须拒绝, 不能跳过
+        # (否则 ".." / ".. ." 被当成根目录放行)
+        if c2 in (".", "..") or not valid_component(c2):
             return None
-    return "/".join(parts)
+        norm.append(c2)
+    return "/".join(norm)
 
 
 def hidden_set():
@@ -428,24 +456,28 @@ def hidden_set():
 
 
 def hidden_state(rel):
-    """返回 (是否隐藏, 命中的隐藏项) — 该项本身或其任意父目录被隐藏都算"""
-    hs = hidden_set()
+    """返回 (是否隐藏, 命中的隐藏项) — 该项本身或其任意父目录被隐藏都算
+
+    匹配按 Windows 语义归一化 (去尾部点/空格 + 小写), 别名无法绕过。
+    """
+    hs = {norm_component(h) for h in hidden_set()}
     cur = ""
     for part in (rel or "").split("/"):
         if not part:
             continue
         cur = cur + "/" + part if cur else part
-        if cur in hs:
-            return True, cur
+        if norm_component(cur) in hs:
+            return True, norm_component(cur)
     return False, None
 
 
 def set_hidden(rel, hidden):
     hs = hidden_set()
     if hidden:
-        hs.add(rel)
+        hs.add(norm_component(rel))
     else:
         hs.discard(rel)
+        hs.discard(norm_component(rel))
     CONFIG["hidden_files"] = sorted(hs)
     save_config()
 
@@ -453,16 +485,71 @@ def set_hidden(rel, hidden):
 def migrate_hidden(old_rel, new_rel=None):
     """重命名/删除后同步隐藏标记 (new_rel=None 表示删除)"""
     hs = hidden_set()
+    old_n = norm_component(old_rel)
     changed = False
     for h in list(hs):
-        if h == old_rel or h.startswith(old_rel + "/"):
+        if h == old_n or h.startswith(old_n + "/"):
             changed = True
             hs.discard(h)
             if new_rel is not None:
-                hs.add(new_rel + h[len(old_rel):])
+                hs.add(norm_component(new_rel + h[len(old_n):]))
     if changed:
         CONFIG["hidden_files"] = sorted(hs)
         save_config()
+
+
+# ----------------------------------------------------------------------------
+# 文件所有权 (水平越权防护: 多用户场景下仅属主/管理员可写)
+# ----------------------------------------------------------------------------
+META_PATH = os.path.join(APP_DIR, "filemeta.json")
+
+
+def load_meta():
+    try:
+        with open(META_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_meta(d):
+    try:
+        tmp = META_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+        os.replace(tmp, META_PATH)
+    except Exception:
+        pass
+
+
+def meta_can_write(rel, username, is_admin):
+    """写操作所有权校验: 属主本人或管理员可写; 无归属记录的历史文件仅管理员可写"""
+    owner = load_meta().get(norm_component(rel))
+    if owner is None:
+        return is_admin
+    return is_admin or owner == username
+
+
+def meta_set_owner(rel, username):
+    d = load_meta()
+    d[norm_component(rel)] = username
+    save_meta(d)
+
+
+def meta_migrate(old_rel, new_rel=None):
+    """重命名/删除后同步所有权记录 (new_rel=None 表示删除, 前缀迁移)"""
+    d = load_meta()
+    old_n = norm_component(old_rel)
+    changed = False
+    for k in list(d.keys()):
+        if k == old_n or k.startswith(old_n + "/"):
+            owner = d.pop(k)
+            changed = True
+            if new_rel is not None:
+                d[norm_component(new_rel + k[len(old_n):])] = owner
+    if changed:
+        save_meta(d)
 
 
 def create_session(username):
@@ -537,10 +624,15 @@ def kill_sessions_of(username):
 
 
 def client_ip(handler):
-    """客户端真实 IP: 支持反向代理透传的 X-Forwarded-For (用于登录限流)"""
-    xff = handler.headers.get("X-Forwarded-For") or ""
-    if xff:
-        return xff.split(",")[0].strip() or handler.client_address[0]
+    """客户端 IP (登录限流用)
+
+    默认使用真实 socket 地址, 防止攻击者伪造 X-Forwarded-For 绕过限流;
+    仅当配置 trust_proxy=true (确定部署在可信反向代理之后) 时才信任 XFF。
+    """
+    if CONFIG.get("trust_proxy"):
+        xff = handler.headers.get("X-Forwarded-For") or ""
+        if xff:
+            return xff.split(",")[0].strip() or handler.client_address[0]
     return handler.client_address[0]
 
 
@@ -588,6 +680,10 @@ def fail(handler, msg, status=400):
 
 
 def read_json_body(handler, max_bytes=65536):
+    # 要求 Content-Type 为 application/json, 防止 text/plain 等跨站提交 (CSRF 缓解)
+    ct = (handler.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if ct != "application/json":
+        return None
     cl = handler.headers.get("Content-Length")
     if cl is None:
         return None
@@ -617,13 +713,14 @@ CONTENT_TYPES = {
 }
 
 # 可在线预览的媒体文件类型 (视频/音频/图片)
+# 注意: 不含 .svg —— SVG 可携带脚本, 按附件下载处理, 绝不内联返回
 MEDIA_TYPES = {
     ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".ogv": "video/ogg",
     ".mov": "video/quicktime",
     ".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac", ".ogg": "audio/ogg",
     ".m4a": "audio/mp4", ".aac": "audio/aac",
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif",
-    ".webp": "image/webp", ".bmp": "image/bmp", ".svg": "image/svg+xml", ".ico": "image/x-icon",
+    ".webp": "image/webp", ".bmp": "image/bmp", ".ico": "image/x-icon",
 }
 
 
@@ -802,6 +899,7 @@ class PanHandler(BaseHTTPRequestHandler):
            title=CONFIG["title"],
            max_upload_mb=CONFIG["max_upload_mb"],
            upload_dir=CONFIG.get("upload_dir", "uploads"),
+           trust_proxy=CONFIG.get("trust_proxy", False),
            texts=CONFIG.get("texts", {}),
            addresses=get_local_ips())
 
@@ -856,9 +954,6 @@ class PanHandler(BaseHTTPRequestHandler):
         if hidden_state(rel)[0] and not check_admin(self):
             self._log(404)
             return fail(self, "文件不存在", 404)
-        ext = os.path.splitext(rel)[1].lower()
-        if ext == ".svg":
-            return self._preview(raw_name)   # SVG 矢量小文件, 直接原样返回
         try:
             import hashlib
             from PIL import Image
@@ -885,6 +980,10 @@ class PanHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Accept-Ranges", "bytes")
+        if disposition == "inline":
+            # 内联预览 (图片/音视频): 禁止任何脚本执行, 防上传内容被当文档渲染
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.send_header("X-Content-Type-Options", "nosniff")
         quoted = urllib.parse.quote(name, safe="")
         ascii_fb = name.encode("ascii", "ignore").decode().replace('"', "") or "download"
         if disposition == "inline":
@@ -1039,7 +1138,8 @@ class PanHandler(BaseHTTPRequestHandler):
            is_admin=bool(u.get("is_admin")) if u else False)
 
     def _api_upload(self, query):
-        if not check_token(self):
+        me = check_token(self)
+        if not me:
             self._log(401)
             return fail(self, "需要登录", 401)
         name = safe_name((query.get("name") or [""])[0])
@@ -1079,10 +1179,17 @@ class PanHandler(BaseHTTPRequestHandler):
         if len(full) > 250:
             self._log(400)
             return fail(self, "文件名过长")
+        file_rel = rel + "/" + name if rel else name
         overwrite = (query.get("overwrite") or [""])[0] == "1"
         if os.path.exists(full) and not overwrite:
             self._log(409)
             return send_json(self, {"ok": False, "exists": True, "msg": "同名文件已存在"}, 409, close=True)
+        if os.path.exists(full) and overwrite:
+            # 水平越权防护: 覆盖他人文件需属主或管理员
+            is_admin = bool(check_admin(self))
+            if not meta_can_write(file_rel, me, is_admin):
+                self._log(403)
+                return send_json(self, {"ok": False, "msg": "无权覆盖他人上传的文件"}, 403, close=True)
 
         written = 0
         error = None
@@ -1105,12 +1212,14 @@ class PanHandler(BaseHTTPRequestHandler):
                 pass
             self._log(500)
             return fail(self, "上传中断或失败", 500)
+        meta_set_owner(file_rel, me)   # 记录文件属主
         log("上传完成: %s (%d 字节) 来自 %s" % (name, written, self.client_address[0]))
         self._log(200)
         ok(self, name=name, size=written)
 
     def _api_delete(self):
-        if not check_token(self):
+        me = check_token(self)
+        if not me:
             self._log(401)
             return fail(self, "需要登录", 401)
         data = read_json_body(self)
@@ -1130,6 +1239,12 @@ class PanHandler(BaseHTTPRequestHandler):
         if hidden_state(rel)[0] and not check_admin(self):
             self._log(404)
             return fail(self, "文件不存在", 404)
+        if not is_dir:
+            # 水平越权防护: 删除文件需属主或管理员
+            is_admin = bool(check_admin(self))
+            if not meta_can_write(rel, me, is_admin):
+                self._log(403)
+                return fail(self, "无权删除他人上传的文件", 403)
         try:
             if is_dir:
                 shutil.rmtree(full)
@@ -1139,6 +1254,7 @@ class PanHandler(BaseHTTPRequestHandler):
             self._log(500)
             return fail(self, "删除失败: %s" % e, 500)
         migrate_hidden(rel, None)
+        meta_migrate(rel, None)
         log("已删除: %s%s" % (rel, " (文件夹)" if is_dir else ""))
         self._log(200)
         ok(self)
@@ -1234,6 +1350,7 @@ class PanHandler(BaseHTTPRequestHandler):
             self._log(500)
             return fail(self, "重命名失败: %s" % e, 500)
         migrate_hidden(rel, new_rel)
+        meta_migrate(rel, new_rel)
         log("已重命名: %s -> %s" % (rel, new_rel))
         self._log(200)
         ok(self, old_name=rel, new_name=new_rel)

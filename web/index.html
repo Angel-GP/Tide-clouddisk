@@ -82,6 +82,8 @@ table.files tbody tr:hover{background:#f7f9fd}
 form.card label{display:block;margin-bottom:14px;font-size:14px}
 form.card label span{display:block;margin-bottom:6px;color:var(--muted);font-size:13px}
 input[type=text],input[type=password],input[type=number]{width:100%;max-width:420px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;outline:none;background:#fff;font-family:inherit;color:var(--txt)}
+label.check{display:flex;align-items:center;gap:8px}
+label.check input{width:auto}
 input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
 .hint{margin:-6px 0 14px;color:var(--muted);font-size:12px}
 .modal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:50}
@@ -220,6 +222,9 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       <label><span id="lbUploadDir">上传目录</span>
         <input type="text" id="cfgUploadDir" maxlength="200">
       </label>
+      <label class="check"><span id="lbTrustProxy">信任反向代理 (X-Forwarded-For, 仅在部署于可信反代后时勾选)</span>
+        <input type="checkbox" id="cfgTrustProxy">
+      </label>
       <div class="hint" id="hintSettings">修改 IP 或端口后, 服务器会自动重启并跳转到新地址 (无需重新登录)。仅管理员可修改设置。</div>
       <button type="submit" class="btn primary" id="btnSaveSettings">保存设置</button>
     </form>
@@ -275,6 +280,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     settings_need_login: '查看和修改设置需要登录', settings_need_admin: '服务器设置仅管理员账号可修改',
     settings_title: '服务器设置', field_title: '服务器标题', field_ip: '监听 IP',
     field_port: '端口', field_max: '单文件大小上限 (MB, 0 = 不限)', field_upload_dir: '上传目录',
+    field_trust_proxy: '信任反向代理 (X-Forwarded-For)',
     hint_settings: 'IP 留空 = 自动监听所有网卡; 修改 IP/端口后服务器自动重启并跳转到新地址。仅管理员可修改设置。',
     btn_save_settings: '保存设置',
     login_title: '登录', login_username: '用户名', login_password: '密码', btn_cancel: '取消',
@@ -306,7 +312,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   var uploadNeedLogin=$('uploadNeedLogin'), uploadArea=$('uploadArea'), dropzone=$('dropzone'), fileInput=$('fileInput');
   var progressWrap=$('progressWrap'), progressBar=$('progressBar'), progressText=$('progressText');
   var settingsNeedLogin=$('settingsNeedLogin'), settingsNeedAdmin=$('settingsNeedAdmin'), settingsForm=$('settingsForm');
-  var cfgTitle=$('cfgTitle'), cfgIp=$('cfgIp'), ipList=$('ipList'), cfgPort=$('cfgPort'), cfgMax=$('cfgMax'), cfgUploadDir=$('cfgUploadDir');
+  var cfgTitle=$('cfgTitle'), cfgIp=$('cfgIp'), ipList=$('ipList'), cfgPort=$('cfgPort'), cfgMax=$('cfgMax'), cfgUploadDir=$('cfgUploadDir'), cfgTrustProxy=$('cfgTrustProxy');
   var loginModal=$('loginModal'), loginUser=$('loginUser'), loginPass=$('loginPass'), loginMsg=$('loginMsg');
   var btnDoLogin=$('btnDoLogin'), btnCancelLogin=$('btnCancelLogin');
   var mediaModal=$('mediaModal'), mediaStage=$('mediaStage'), mediaName=$('mediaName');
@@ -314,7 +320,8 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   var hoverEl=$('hoverPreview');
   var toastEl=$('toast');
 
-  var token = localStorage.getItem('pan_token') || '';
+  // 登录 token 仅保存在内存 (由 HttpOnly Cookie 携带), 不写入 localStorage, 防 XSS 窃取
+  var token = '';
   var sessionVerified = false;   // 登录态必须经服务器核实后才算数 (防止旧 token 假显示已登录)
   var currentTab = 'files';
   var toastTimer = null;
@@ -371,7 +378,6 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       if (r.status === 401){
         token = '';
         sessionVerified = false;
-        localStorage.removeItem('pan_token');
         localStorage.removeItem('pan_user');
         localStorage.removeItem('pan_admin');
         updateUserUI();
@@ -425,6 +431,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     setEl($('lbPort'), 'field_port');
     setEl($('lbMax'), 'field_max');
     setEl($('lbUploadDir'), 'field_upload_dir');
+    setEl($('lbTrustProxy'), 'field_trust_proxy');
     setEl($('hintSettings'), 'hint_settings');
     setEl($('btnSaveSettings'), 'btn_save_settings');
     setEl($('loginTitleH'), 'login_title');
@@ -484,7 +491,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
   function isMedia(name){
     return /\.(mp4|m4v|webm|ogv|mov|mp3|wav|flac|ogg|m4a|aac|jpe?g|png|gif|webp|bmp|svg|ico)$/i.test(name);
   }
-  function isImage(n){ return /\.(jpe?g|png|gif|webp|bmp|svg|ico)$/i.test(n); }
+  function isImage(n){ return /\.(jpe?g|png|gif|webp|bmp|ico)$/i.test(n); }   // 不含 svg (防 XSS, svg 按附件下载)
   function isVideo(n){ return /\.(mp4|m4v|webm|ogv|mov)$/i.test(n); }
   function isAudio(n){ return /\.(mp3|wav|flac|ogg|m4a|aac)$/i.test(n); }
   function isArchive(n){ return /\.(zip|rar|7z|tar|gz|bz2|xz|iso|jar)$/i.test(n); }
@@ -814,7 +821,6 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
         if (data && data.ok){
           token = data.token;
           sessionVerified = true;
-          localStorage.setItem('pan_token', token);
           localStorage.setItem('pan_user', data.username);
           localStorage.setItem('pan_admin', data.is_admin ? '1' : '');
           closeLogin();
@@ -833,7 +839,6 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
     api('/api/logout', {method:'POST'}).catch(function(){});
     token = '';
     sessionVerified = false;
-    localStorage.removeItem('pan_token');
     localStorage.removeItem('pan_user');
     localStorage.removeItem('pan_admin');
     updateUserUI();
@@ -918,6 +923,7 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       cfgPort.value = d.port;
       cfgMax.value = d.max_upload_mb;
       cfgUploadDir.value = d.upload_dir || 'uploads';
+      cfgTrustProxy.checked = !!d.trust_proxy;
       ipList.innerHTML = '';
       var opts = [''].concat(d.addresses || []);
       opts.forEach(function(ip){
@@ -934,7 +940,8 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       ip: cfgIp.value.trim(),
       port: parseInt(cfgPort.value, 10),
       max_upload_mb: parseInt(cfgMax.value, 10) || 0,
-      upload_dir: cfgUploadDir.value.trim() || 'uploads'
+      upload_dir: cfgUploadDir.value.trim() || 'uploads',
+      trust_proxy: !!cfgTrustProxy.checked
     };
     if (!body.port || body.port < 1 || body.port > 65535){ toast(t('port_invalid'), 'err'); return; }
     api('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
@@ -980,15 +987,13 @@ input:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(51,102,255,.12)}
       .then(function(r){ return r.json().catch(function(){ return null; }); })
       .then(function(d){
         if (d && d.logged){
-          token = d.token || token;
+          token = d.token || token;   // 仅内存保存
           sessionVerified = true;
-          localStorage.setItem('pan_token', token);
           localStorage.setItem('pan_user', d.username);
           localStorage.setItem('pan_admin', d.is_admin ? '1' : '');
         } else {
           token = '';
           sessionVerified = false;
-          localStorage.removeItem('pan_token');
           localStorage.removeItem('pan_user');
           localStorage.removeItem('pan_admin');
         }

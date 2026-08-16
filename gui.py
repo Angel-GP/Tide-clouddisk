@@ -80,6 +80,7 @@ DEFAULT_TEXTS = {
     "settings_need_login": "查看和修改设置需要登录", "settings_need_admin": "服务器设置仅管理员账号可修改",
     "settings_title": "服务器设置", "field_title": "服务器标题", "field_ip": "监听 IP",
     "field_port": "端口", "field_max": "单文件大小上限 (MB, 0 = 不限)", "field_upload_dir": "上传目录",
+    "field_trust_proxy": "信任反向代理 (X-Forwarded-For)",
     "hint_settings": "IP 留空 = 自动监听所有网卡; 修改 IP/端口后服务器自动重启并跳转到新地址。仅管理员可修改设置。",
     "btn_save_settings": "保存设置",
     "login_title": "登录", "login_username": "用户名", "login_password": "密码", "btn_cancel": "取消",
@@ -112,7 +113,7 @@ TEXT_GROUPS = [
                 "upload_success", "upload_overwritten", "upload_skipped", "upload_failed",
                 "need_login_first", "confirm_overwrite"]),
     ("设置页", ["settings_need_login", "settings_need_admin", "settings_title", "field_title", "field_ip",
-                "field_port", "field_max", "field_upload_dir", "hint_settings", "btn_save_settings"]),
+                "field_port", "field_max", "field_upload_dir", "field_trust_proxy", "hint_settings", "btn_save_settings"]),
     ("登录弹窗", ["login_title", "login_username", "login_password", "btn_cancel", "login_success",
                   "login_failed", "login_error_connect", "login_error_empty"]),
     ("提示与弹窗", ["need_login", "logout_done", "deleted", "delete_failed", "link_copied", "copy_failed",
@@ -319,6 +320,7 @@ class PanGUI:
                           "upload_need_login", "login", "go_login", "btn_save_settings"]
 
     def __init__(self, root, skip_login=False):
+        self._skip_login = skip_login
         self.root = root
         self.q = queue.Queue()
         self.client = Client()
@@ -464,6 +466,7 @@ class PanGUI:
         self.var_port = tk.StringVar()
         self.var_max = tk.StringVar()
         self.var_upload = tk.StringVar()
+        self.var_trust_proxy = tk.BooleanVar(value=False)
 
         grid = ttk.Frame(f)
         grid.pack(fill="x")
@@ -481,10 +484,12 @@ class PanGUI:
         ttk.Entry(uprow, textvariable=self.var_upload, width=28).pack(side="left")
         ttk.Button(uprow, text="浏览...", command=self.browse_upload_dir).pack(side="left", padx=(8, 0))
         add_row(4, "上传目录", uprow)
+        ttk.Checkbutton(grid, text="信任反向代理 (X-Forwarded-For, 仅部署于可信反代后勾选)",
+                        variable=self.var_trust_proxy).grid(row=5, column=1, sticky="w", pady=(6, 0))
         ttk.Label(grid, text="IP 留空 = 自动监听所有网卡; 修改 IP/端口后服务自动重启。",
-                  foreground="#888888").grid(row=5, column=1, sticky="w", pady=(4, 0))
+                  foreground="#888888").grid(row=6, column=1, sticky="w", pady=(4, 0))
         ttk.Label(grid, text="上传目录留空 = 程序目录下的 uploads; 修改后立即生效(原目录文件不会自动搬移)。",
-                  foreground="#888888").grid(row=6, column=1, sticky="w")
+                  foreground="#888888").grid(row=7, column=1, sticky="w")
         ttk.Button(f, text="保存设置", command=self.save_settings).pack(pady=(16, 0))
 
     def _build_texts_tab(self, nb):
@@ -657,8 +662,9 @@ class PanGUI:
             elif ev[1] == "error":
                 self.set_status("● 启动失败", "#c62828")
                 self.append_log("启动失败: " + str(ev[2]))
-                messagebox.showwarning("服务启动失败",
-                                       str(ev[2]) + "\n\n请到「服务器设置」修改 IP/端口后重新启动")
+                if not self._skip_login:   # 自检模式不弹窗 (避免无人值守时阻塞)
+                    messagebox.showwarning("服务启动失败",
+                                           str(ev[2]) + "\n\n请到「服务器设置」修改 IP/端口后重新启动")
         elif kind == "prog":
             self.set_progress(ev[1], ev[2], ev[3])
         elif kind == "upload_done":
@@ -1081,6 +1087,7 @@ class PanGUI:
         self.var_port.set(str(cfg.get("port", 8000)))
         self.var_max.set(str(cfg.get("max_upload_mb", 2048)))
         self.var_upload.set(cfg.get("upload_dir", "uploads"))
+        self.var_trust_proxy.set(bool(cfg.get("trust_proxy", False)))
         self.cmb_ip.config(values=[""] + panserver.get_local_ips() + ["0.0.0.0"])
 
     def browse_upload_dir(self):
@@ -1115,6 +1122,7 @@ class PanGUI:
             "port": port,
             "max_upload_mb": maxm,
             "upload_dir": self.var_upload.get().strip() or "uploads",
+            "trust_proxy": bool(self.var_trust_proxy.get()),
         })
         if err:
             messagebox.showerror("保存失败", err)
