@@ -6,6 +6,7 @@ thumbs/
 debug/
 logs/
 error.log
+chat.json
 
 # Python
 __pycache__/
@@ -23,3 +24,4 @@ pylibs/
 _exetest/
 _extract/
 _check*.js
+test/

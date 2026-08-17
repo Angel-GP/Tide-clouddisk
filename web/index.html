@@ -964,6 +964,10 @@ tr.selected-row td{background:var(--line)}
     var uploadTab = document.querySelector('.tab[data-tab="upload"]');
     if (uploadTab) uploadTab.classList.toggle('hidden', !logged || tHide('tab_upload'));
     if (!logged && currentTab === 'upload') switchTab('files');
+    // 设置标签页: 仅管理员可见 (非管理员/未登录不出现设置入口)
+    var settingsTab = document.querySelector('.tab[data-tab="settings"]');
+    if (settingsTab) settingsTab.classList.toggle('hidden', !(logged && isAdmin) || tHide('tab_settings'));
+    if (!(logged && isAdmin) && currentTab === 'settings') switchTab('files');
     btnLogin.classList.toggle('hidden', logged || tHide('login'));
     btnLogout.classList.toggle('hidden', !logged || tHide('logout'));
     userLabel.classList.toggle('hidden', !logged || tHide('logged_in_as'));
