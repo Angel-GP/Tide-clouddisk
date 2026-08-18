@@ -37,7 +37,7 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
-APP_VERSION = "1.2.6"   # 程序版本号 (发版时与 Release 标签保持一致)
+APP_VERSION = "1.2.7"   # 程序版本号 (发版时与 Release 标签保持一致)
 
 # ----------------------------------------------------------------------------
 # 基础配置
@@ -1734,11 +1734,13 @@ def try_add_firewall_rule():
         return
     try:
         import subprocess
+        # CREATE_NO_WINDOW: 打包为无控制台 exe 时, 防止 netsh 弹出命令行窗口闪烁
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         subprocess.run(
             ["netsh", "advfirewall", "firewall", "add", "rule",
              "name=PAN Tide cloud", "dir=in", "action=allow",
              "program=%s" % sys.executable, "enable=yes", "profile=any"],
-            capture_output=True, timeout=15)
+            capture_output=True, timeout=15, creationflags=flags)
     except Exception:
         pass
 
