@@ -280,7 +280,8 @@ class Client:
             raise ApiError(0, "无法连接服务器: %s" % e)
 
     def login(self, username, password):
-        status, text = self.request("/api/login", "POST", {"username": username, "password": password})
+        status, text = self.request("/api/login", "POST",
+                                    {"username": username, "password": password, "backend": True})
         d = json.loads(text)
         if d.get("ok"):
             self.token = d["token"]
@@ -335,6 +336,7 @@ class PanGUI:
         self.q = queue.Queue()
         self.client = Client()
         self.login_user = ""
+        self.login_role = ""
         self._upload_queue = []
         self._upload_overwrite = False
         self.current_path = ""
@@ -451,18 +453,18 @@ class PanGUI:
         ttk.Button(row, text="➕ 添加账号", command=self.add_user).pack(side="left")
         ttk.Button(row, text="🗑 删除账号", command=self.delete_user).pack(side="left", padx=(8, 0))
         ttk.Button(row, text="🔑 重置密码", command=self.reset_password).pack(side="left", padx=(8, 0))
-        ttk.Button(row, text="⭐ 设为/取消管理员", command=self.toggle_admin).pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="⭐ 变更角色", command=self.toggle_role).pack(side="left", padx=(8, 0))
         ttk.Button(row, text="🔄 刷新", command=self.refresh_users).pack(side="left", padx=(8, 0))
-        ttk.Label(f, text="账号管理仅管理员可用; 普通账号可登录网页上传文件。", foreground="#888888").pack(anchor="w", pady=(0, 6))
+        ttk.Label(f, text="账号管理仅超级管理员可用; 超级管理员可登录后台, 管理员仅可在网页修改设置, 普通用户仅上传下载。", foreground="#888888").pack(anchor="w", pady=(0, 6))
 
         wrap = ttk.Frame(f)
         wrap.pack(fill="both", expand=True)
-        cols = ("username", "admin")
+        cols = ("username", "role")
         self.utree = ttk.Treeview(wrap, columns=cols, show="headings", selectmode="browse")
         self.utree.heading("username", text="用户名")
-        self.utree.heading("admin", text="管理员")
+        self.utree.heading("role", text="角色")
         self.utree.column("username", width=300, anchor="w")
-        self.utree.column("admin", width=150, anchor="center")
+        self.utree.column("role", width=150, anchor="center")
         vsb2 = ttk.Scrollbar(wrap, orient="vertical", command=self.utree.yview)
         self.utree.configure(yscrollcommand=vsb2.set)
         vsb2.pack(side="right", fill="y")
@@ -561,6 +563,9 @@ class PanGUI:
             e.insert(0, custom.get(k, ""))
 
     def texts_save(self):
+        if self.login_role != "super_admin":
+            messagebox.showerror("无权限", "仅超级管理员可修改自定义文案")
+            return
         data = {}
         for k, e in self.text_entries.items():
             data[k] = e.get().strip()
@@ -760,7 +765,8 @@ class PanGUI:
                 ok_btn.config(state="normal")
                 return
             self.login_user = d.get("username", u)
-            self.user_lbl.config(text="已登录: %s%s" % (self.login_user, " (管理员)" if d.get("is_admin") else ""))
+            self.login_role = d.get("role", "user")
+            self.user_lbl.config(text="已登录: %s%s" % (self.login_user, " (超级管理员)" if self.login_role == "super_admin" else ""))
             self.append_log("已登录: " + self.login_user)
             dlg.destroy()
             self.refresh_files()
@@ -972,9 +978,10 @@ class PanGUI:
             self.toast(e.msg)
             return
         self.utree.delete(*self.utree.get_children())
+        role_names = {"super_admin": "超级管理员", "admin": "管理员", "user": "普通用户"}
         for u in users:
             self.utree.insert("", "end", iid=u["username"],
-                              values=(u["username"], "✔ 是" if u.get("is_admin") else "—"))
+                              values=(u["username"], role_names.get(u.get("role"), u.get("role", "user"))))
 
     def add_user(self):
         if not self.ensure_login():
@@ -989,12 +996,15 @@ class PanGUI:
         box.pack()
         var_name = tk.StringVar()
         var_pass = tk.StringVar()
-        var_admin = tk.BooleanVar(value=False)
+        var_role = tk.StringVar(value="user")
         ttk.Label(box, text="用户名").grid(row=0, column=0, sticky="e", pady=(0, 8))
         ttk.Entry(box, textvariable=var_name, width=24).grid(row=0, column=1, padx=(10, 0), pady=(0, 8))
         ttk.Label(box, text="密码").grid(row=1, column=0, sticky="e", pady=(0, 8))
         ttk.Entry(box, textvariable=var_pass, width=24, show="*").grid(row=1, column=1, padx=(10, 0), pady=(0, 8))
-        ttk.Checkbutton(box, text="设为管理员", variable=var_admin).grid(row=2, column=1, sticky="w")
+        ttk.Label(box, text="角色").grid(row=2, column=0, sticky="e", pady=(0, 8))
+        role_box = ttk.Combobox(box, textvariable=var_role, width=22, state="readonly",
+                                values=("普通用户", "管理员", "超级管理员"))
+        role_box.grid(row=2, column=1, padx=(10, 0), pady=(0, 8))
         err = ttk.Label(box, text="", foreground="#c62828")
         err.grid(row=3, column=0, columnspan=2)
         btns = ttk.Frame(box)
@@ -1003,10 +1013,11 @@ class PanGUI:
         ttk.Button(btns, text="添加", command=lambda: do_add()).pack(side="right")
 
         def do_add():
+            role_map = {"普通用户": "user", "管理员": "admin", "超级管理员": "super_admin"}
             try:
                 self.client.request("/api/users", "POST",
                                     {"username": var_name.get().strip(), "password": var_pass.get(),
-                                     "is_admin": var_admin.get()})
+                                     "role": role_map.get(var_role.get(), "user")})
             except ApiError as e:
                 err.config(text=e.msg)
                 return
@@ -1077,7 +1088,7 @@ class PanGUI:
 
         dlg.wait_window()
 
-    def toggle_admin(self):
+    def toggle_role(self):
         if not self.ensure_login():
             return
         sel = self.utree.selection()
@@ -1085,15 +1096,38 @@ class PanGUI:
             self.toast("请先选中账号")
             return
         name = str(sel[0])
-        current = self.utree.set(name, "admin")
-        is_admin = not ("是" in current)
-        try:
-            self.client.request("/api/users/admin", "POST", {"username": name, "is_admin": is_admin})
-        except ApiError as e:
-            self.toast(e.msg)
-            return
-        self.append_log("已%s管理员权限: %s" % ("授予" if is_admin else "取消", name))
-        self.refresh_users()
+        role_names = {"超级管理员": "super_admin", "管理员": "admin", "普通用户": "user"}
+        dlg = tk.Toplevel(self.root)
+        dlg.title("变更角色 - " + name)
+        _set_window_icon(dlg)
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        box = ttk.Frame(dlg, padding=20)
+        box.pack()
+        ttk.Label(box, text="角色").grid(row=0, column=0, sticky="e", pady=(0, 8))
+        var_role = tk.StringVar(value="普通用户")
+        ttk.Combobox(box, textvariable=var_role, width=22, state="readonly",
+                     values=("普通用户", "管理员", "超级管理员")).grid(row=0, column=1, padx=(10, 0), pady=(0, 8))
+        err = ttk.Label(box, text="", foreground="#c62828")
+        err.grid(row=1, column=0, columnspan=2)
+        btns = ttk.Frame(box)
+        btns.grid(row=2, column=0, columnspan=2, pady=(14, 0))
+        ttk.Button(btns, text="取消", command=dlg.destroy).pack(side="right", padx=(8, 0))
+        ttk.Button(btns, text="确定", command=lambda: do_set()).pack(side="right")
+
+        def do_set():
+            try:
+                self.client.request("/api/users/role", "POST",
+                                    {"username": name, "role": role_names.get(var_role.get(), "user")})
+            except ApiError as e:
+                err.config(text=e.msg)
+                return
+            self.append_log("已变更角色: %s -> %s" % (name, var_role.get()))
+            dlg.destroy()
+            self.refresh_users()
+
+        dlg.wait_window()
 
     # ------------------------------------------------------------------ 设置
     def load_settings_into_form(self):
@@ -1120,6 +1154,9 @@ class PanGUI:
             self.var_upload.set(os.path.normpath(target))
 
     def save_settings(self):
+        if self.login_role != "super_admin":
+            messagebox.showerror("无权限", "仅超级管理员可修改服务器设置")
+            return
         try:
             port = int(self.var_port.get().strip())
         except ValueError:

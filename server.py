@@ -37,7 +37,7 @@ import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
-APP_VERSION = "1.2.7"   # 程序版本号 (发版时与 Release 标签保持一致)
+APP_VERSION = "1.2.8"   # 程序版本号 (发版时与 Release 标签保持一致)
 
 # ----------------------------------------------------------------------------
 # 基础配置
@@ -60,7 +60,7 @@ DEFAULTS = {
     "title": "Tide cloud",    # 页面标题
     "max_upload_mb": 2048,   # 单文件上传上限 (MB), 0 = 不限
     "upload_dir": "uploads", # 文件保存目录 (相对程序目录)
-    "users": [],             # 账号列表: [{"username","salt","password_hash","is_admin"}]
+    "users": [],             # 账号列表: [{"username","salt","password_hash","role"}]  role: super_admin/admin/user
     "texts": {},             # 前端自定义文案 (键 -> 文本, 覆盖前端默认值)
     "hidden_files": [],      # 管理员隐藏的文件/文件夹相对路径列表 (普通用户与未登录不可见)
     "trust_proxy": False,    # 是否信任反向代理透传的 X-Forwarded-For (默认不信任, 防伪造绕过登录限流)
@@ -314,11 +314,26 @@ def load_config():
             "username": str(raw.get("username") or "admin"),
             "salt": salt,
             "password_hash": raw.get("password_hash") or hash_password("admin123", salt),
-            "is_admin": True,
+            "role": "super_admin",
         }]
         save_config()
         if not has_hash:
             log("首次启动, 已生成初始账号: admin / admin123 (请尽快修改)")
+    # 角色迁移: 旧版 is_admin 布尔 -> role 字符串; 并确保至少存在一个超级管理员
+    changed = False
+    for u in CONFIG.get("users", []):
+        if "role" not in u or u.get("role") not in ("super_admin", "admin", "user"):
+            u["role"] = "super_admin" if u.get("is_admin") else "user"
+            u.pop("is_admin", None)
+            changed = True
+    if not any(u.get("role") == "super_admin" for u in CONFIG.get("users", [])):
+        # 没有超级管理员时, 把第一个账号提升为超级管理员 (保证后台可登录)
+        for u in CONFIG.get("users", []):
+            u["role"] = "super_admin"
+            changed = True
+            break
+    if changed:
+        save_config()
     # 规范化
     try:
         CONFIG["port"] = int(CONFIG["port"])
@@ -702,18 +717,33 @@ def find_user(username):
 
 
 def check_admin(handler):
-    """管理员则返回用户名, 否则返回 None"""
+    """管理员(admin 或 super_admin)则返回用户名, 否则返回 None"""
     username = check_token(handler)
     if not username:
         return None
     u = find_user(username)
-    if u and u.get("is_admin"):
+    if u and u.get("role") in ("admin", "super_admin"):
+        return username
+    return None
+
+
+def check_super_admin(handler):
+    """超级管理员则返回用户名, 否则返回 None (后台登录/账号管理专用)"""
+    username = check_token(handler)
+    if not username:
+        return None
+    u = find_user(username)
+    if u and u.get("role") == "super_admin":
         return username
     return None
 
 
 def count_admin():
-    return sum(1 for u in CONFIG.get("users", []) if u.get("is_admin"))
+    return sum(1 for u in CONFIG.get("users", []) if u.get("role") in ("admin", "super_admin"))
+
+
+def count_super_admin():
+    return sum(1 for u in CONFIG.get("users", []) if u.get("role") == "super_admin")
 
 
 def kill_sessions_of(username):
@@ -1252,8 +1282,8 @@ class PanHandler(BaseHTTPRequestHandler):
                 self._api_delete_user()
             elif path == "/api/users/password":
                 self._api_reset_password()
-            elif path == "/api/users/admin":
-                self._api_set_admin()
+            elif path == "/api/users/role":
+                self._api_set_role()
             else:
                 self._log(404)
                 fail(self, "接口不存在", 404)
@@ -1279,8 +1309,14 @@ class PanHandler(BaseHTTPRequestHandler):
             return fail(self, "请求格式错误")
         name = str(data.get("username", "")).strip()
         pwd = str(data.get("password", ""))
+        backend = bool(data.get("backend"))
         u = find_user(name)
         if u and secrets.compare_digest(hash_password(pwd, u["salt"]), u["password_hash"]):
+            # 后台登录 (桌面管理端): 仅超级管理员可登录
+            if backend and u.get("role") != "super_admin":
+                self._log(403)
+                audit("后台登录拒绝", "用户=%s 角色=%s 来源=%s" % (name, u.get("role"), ip))
+                return fail(self, "仅超级管理员可登录后台", 403)
             LOGIN_FAILS.pop(ip, None)
             token = create_session(name)
             audit("登录成功", "用户=%s 来源=%s" % (name, ip))
@@ -1289,7 +1325,9 @@ class PanHandler(BaseHTTPRequestHandler):
                 ("Set-Cookie",
                  "pan_token=%s; Path=/; Max-Age=%d; SameSite=Lax; HttpOnly" % (token, SESSION_HOURS * 3600))]
             self._log(200)
-            return ok(self, token=token, username=name, is_admin=bool(u.get("is_admin")))
+            return ok(self, token=token, username=name,
+                      role=u.get("role", "user"),
+                      is_admin=u.get("role") in ("admin", "super_admin"))
         entry = LOGIN_FAILS.get(ip, [0, time.time()])
         entry[0] += 1
         entry[1] = time.time()
@@ -1317,7 +1355,8 @@ class PanHandler(BaseHTTPRequestHandler):
         u = find_user(username)
         self._log(200)
         ok(self, logged=True, token=token, username=username,
-           is_admin=bool(u.get("is_admin")) if u else False)
+           role=u.get("role", "user") if u else "user",
+           is_admin=u.get("role") in ("admin", "super_admin") if u else False)
 
     def _api_upload(self, query):
         me = check_token(self)
@@ -1572,18 +1611,18 @@ class PanHandler(BaseHTTPRequestHandler):
 
     # ------------------------- 账号管理 -------------------------
     def _api_list_users(self):
-        if not check_admin(self):
+        if not check_super_admin(self):
             self._log(403)
-            return fail(self, "需要管理员权限", 403)
+            return fail(self, "需要超级管理员权限", 403)
         self._log(200)
-        ok(self, users=[{"username": u["username"], "is_admin": bool(u.get("is_admin"))}
+        ok(self, users=[{"username": u["username"], "role": u.get("role", "user")}
                         for u in CONFIG.get("users", [])])
 
     def _api_add_user(self):
-        me = check_admin(self)
+        me = check_super_admin(self)
         if not me:
             self._log(403)
-            return fail(self, "需要管理员权限", 403)
+            return fail(self, "需要超级管理员权限", 403)
         data = read_json_body(self)
         if not isinstance(data, dict):
             self._log(400)
@@ -1599,24 +1638,28 @@ class PanHandler(BaseHTTPRequestHandler):
         if len(password) < 4:
             self._log(400)
             return fail(self, "密码至少 4 位")
+        role = str(data.get("role", "user"))
+        if role not in ("super_admin", "admin", "user"):
+            self._log(400)
+            return fail(self, "角色不合法")
         salt = secrets.token_hex(16)
         CONFIG["users"].append({
             "username": username,
             "salt": salt,
             "password_hash": hash_password(password, salt),
-            "is_admin": bool(data.get("is_admin")),
+            "role": role,
         })
         save_config()
-        log("已添加账号: %s" % username)
-        audit("添加账号", "账号=%s 管理员=%s 用户=%s 来源=%s" % (username, bool(data.get("is_admin")), me, client_ip(self)))
+        log("已添加账号: %s (角色=%s)" % (username, role))
+        audit("添加账号", "账号=%s 角色=%s 用户=%s 来源=%s" % (username, role, me, client_ip(self)))
         self._log(200)
         ok(self)
 
     def _api_delete_user(self):
-        me = check_admin(self)
+        me = check_super_admin(self)
         if not me:
             self._log(403)
-            return fail(self, "需要管理员权限", 403)
+            return fail(self, "需要超级管理员权限", 403)
         data = read_json_body(self)
         if not isinstance(data, dict):
             self._log(400)
@@ -1629,9 +1672,9 @@ class PanHandler(BaseHTTPRequestHandler):
         if not u:
             self._log(404)
             return fail(self, "账号不存在", 404)
-        if u.get("is_admin") and count_admin() <= 1:
+        if u.get("role") == "super_admin" and count_super_admin() <= 1:
             self._log(400)
-            return fail(self, "不能删除最后一个管理员")
+            return fail(self, "不能删除最后一个超级管理员")
         CONFIG["users"].remove(u)
         kill_sessions_of(target)
         save_config()
@@ -1654,7 +1697,7 @@ class PanHandler(BaseHTTPRequestHandler):
         if len(password) < 4:
             self._log(400)
             return fail(self, "密码至少 4 位")
-        if target != me and not check_admin(self):
+        if target != me and not check_super_admin(self):
             self._log(403)
             return fail(self, "只能修改自己的密码", 403)
         u = find_user(target)
@@ -1671,11 +1714,11 @@ class PanHandler(BaseHTTPRequestHandler):
         self._log(200)
         ok(self)
 
-    def _api_set_admin(self):
-        me = check_admin(self)
+    def _api_set_role(self):
+        me = check_super_admin(self)
         if not me:
             self._log(403)
-            return fail(self, "需要管理员权限", 403)
+            return fail(self, "需要超级管理员权限", 403)
         data = read_json_body(self)
         if not isinstance(data, dict):
             self._log(400)
@@ -1685,14 +1728,20 @@ class PanHandler(BaseHTTPRequestHandler):
         if not u:
             self._log(404)
             return fail(self, "账号不存在", 404)
-        is_admin = bool(data.get("is_admin"))
-        if not is_admin and u.get("is_admin") and count_admin() <= 1:
+        role = str(data.get("role", "user"))
+        if role not in ("super_admin", "admin", "user"):
             self._log(400)
-            return fail(self, "不能取消最后一个管理员")
-        u["is_admin"] = is_admin
+            return fail(self, "角色不合法")
+        if target == me and role != "super_admin" and count_super_admin() <= 1:
+            self._log(400)
+            return fail(self, "不能取消最后一个超级管理员")
+        if u.get("role") == "super_admin" and role != "super_admin" and count_super_admin() <= 1:
+            self._log(400)
+            return fail(self, "不能取消最后一个超级管理员")
+        u["role"] = role
         save_config()
-        log("已%s管理员权限: %s" % ("授予" if is_admin else "取消", target))
-        audit("变更管理员权限", "账号=%s 操作=%s 用户=%s 来源=%s" % (target, "授予" if is_admin else "取消", me, client_ip(self)))
+        log("已变更角色: %s -> %s" % (target, role))
+        audit("变更角色", "账号=%s 角色=%s 用户=%s 来源=%s" % (target, role, me, client_ip(self)))
         self._log(200)
         ok(self)
 
